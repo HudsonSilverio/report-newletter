@@ -1,3 +1,3 @@
 # python main.py
 
-print("hello")
+print("1, 2, 11, 2")
