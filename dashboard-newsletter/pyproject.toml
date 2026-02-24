@@ -8,6 +8,9 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "pandas (>=1.4.0,<3)",
+    "streamlit (>=1.54.0,<2.0.0)",
+    "plotly (>=6.5.2,<7.0.0)"
 ]
 
 [tool.poetry]
