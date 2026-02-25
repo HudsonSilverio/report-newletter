@@ -32,33 +32,82 @@ avg_open = means["avg_open_rate"]  # comes from cell D1 of your sheet
 # -------------------------------------------------------
 # HEADER
 # -------------------------------------------------------
-st.title("📧 Newsletter Performance Dashboard")
+st.title("📧 Clearer Thinking Newsletter Dashboard")
 st.markdown("Interactive timeline of newsletter metrics")
 st.divider()
 
 # -------------------------------------------------------
-# TOP KPI CARDS
-# These show the most important numbers at a glance
+# HEADER — Latest Newsletter + Comparison with Averages
 # -------------------------------------------------------
+
+# Gets the most recent newsletter (last row after sorting by date)
+latest = df.sort_values("date", ascending=False).iloc[0]
+
+st.subheader("📬 Latest Newsletter")
+st.markdown(f"### {latest['title']}")
+st.markdown(f"**Author:** {latest['author']} &nbsp;&nbsp;|&nbsp;&nbsp; **Sent on:** {latest['date'].strftime('%b %d, %Y')}")
+
+st.divider()
+
+# 4 columns — one for each metric
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    avg_opens = df["opens_pct"].mean()
-    st.metric(label="Avg Open Rate", value=f"{avg_opens:.1f}%")
+    # delta shows the difference between latest and the all-time average
+    # if positive → green arrow, if negative → red arrow
+    st.metric(
+        label="Opens %",
+        value=f"{latest['opens_pct']:.1f}%",
+        delta=f"{latest['opens_pct'] - means['avg_open_rate']:.1f}% vs avg {means['avg_open_rate']:.2f}%"
+    )
 
 with col2:
-    avg_clicks = df["clicks_pct"].mean()
-    st.metric(label="Avg Click Rate", value=f"{avg_clicks:.2f}%")
+    st.metric(
+        label="Average Rating",
+        value=f"{latest['avg_rating']:.1f}",
+        delta=f"{latest['avg_rating'] - means['avg_rating']:.2f} vs avg {means['avg_rating']:.2f}"
+    )
 
 with col3:
-    avg_rating = df["avg_rating"].mean()
-    st.metric(label="Avg Rating", value=f"{avg_rating:.2f} ⭐")
+    st.metric(
+        label="% 4s and 5s",
+        value=f"{latest['pct_positive']:.0f}%",
+        delta=f"{latest['pct_positive'] - means['avg_pct_positive']:.0f}% vs avg {means['avg_pct_positive']:.0f}%"
+    )
 
 with col4:
-    total_emails = len(df)
-    st.metric(label="Total Newsletters", value=total_emails)
+    st.metric(
+        label="% 1s",
+        value=f"{latest['pct_negative']:.0f}%",
+        delta=f"{latest['pct_negative'] - means['avg_pct_negative']:.0f}% vs avg {means['avg_pct_negative']:.0f}%",
+        delta_color="inverse"  # for negative ratings, lower is BETTER so we invert the arrow color
+    )
 
 st.divider()
+
+# # -------------------------------------------------------
+# # TOP KPI CARDS
+# # These show the most important numbers at a glance
+# # -------------------------------------------------------
+# col1, col2, col3, col4 = st.columns(4)
+
+# with col1:
+#     avg_opens = df["opens_pct"].mean()
+#     st.metric(label="Opens %", value=f"{avg_opens:.1f}%")
+
+# with col3:
+#     avg_rating = df["avg_rating"].mean()
+#     st.metric(label="Avg Rating", value=f"{avg_rating:.2f}")
+
+# with col3:
+#     pct_positive = df["pct_positive"].mean()
+#     st.metric(label="4s And 5s %", value=f"{pct_positive:.2f}%")
+
+# with col4:
+#     pct_negative = df["pct_negative"].mean()
+#     st.metric(label="% (1s)", value=f"{pct_negative:.2f}")
+
+# st.divider()
 
 # -------------------------------------------------------
 # SIDEBAR FILTERS
@@ -95,9 +144,7 @@ if selected_author != "All":
 
 st.sidebar.markdown(f"**{len(filtered_df)} newsletters** selected")
 
-# -------------------------------------------------------
-# CHART 1 — Open Rate Over Time
-# -------------------------------------------------------
+
 # -------------------------------------------------------
 # CHART 1 — Open Rate Over Time
 # -------------------------------------------------------
@@ -121,7 +168,7 @@ fig1.add_trace(go.Scatter(
     name="Open %",              # this is the legend label
     line=dict(color="#4C9BE8", width=2),
     marker=dict(size=8),
-    hovertemplate="<b>%{customdata[0]}</b><br>Author: %{customdata[1]}<br>Open Rate: %{y:.1f}%<extra></extra>",
+    hovertemplate="<b>%{customdata[0]}</b><br>Open Rate: %{y:.1f}%<br>Author: %{customdata[1]}<extra></extra>",
     customdata=filtered_df[["title", "author"]].values
 ))
 
@@ -130,7 +177,7 @@ fig1.add_trace(go.Scatter(
     x=filtered_df["date"],
     y=filtered_df["avg_opens_line"],
     mode="lines",               # only line, no dots
-    name=f"Average Open % Across All Newsletters",  # legend label
+    name=f"Average All",  # legend label
     line=dict(color="#E8554C", width=2, dash="dash"),  # dashed red line
 ))
 
@@ -150,55 +197,133 @@ fig1.update_layout(
 st.plotly_chart(fig1, use_container_width=True)
 
 # -------------------------------------------------------
-# CHART 2 — Click Rate Over Time
+# CHART 2 — Average Rating Over Time
 # -------------------------------------------------------
-st.subheader("🖱️ Click Rate Over Time (%)")
+st.subheader("⭐ Average Rating")
 
-fig2 = px.line(
-    filtered_df,
-    x="date",
-    y="clicks_pct",
-    hover_name="title",
-    hover_data={"author": True, "clicks_pct": ":.2f"},
-    markers=True,
-    labels={"date": "Date", "clicks_pct": "Click Rate (%)"},
+avg_rating_mean = means["avg_rating"]
+filtered_df["avg_rating_line"] = avg_rating_mean
+
+fig2 = go.Figure()
+
+fig2.add_trace(go.Scatter(
+    x=filtered_df["date"],
+    y=filtered_df["avg_rating"],
+    mode="lines+markers",
+    name="Average Rating",
+    line=dict(color="#4C9BE8", width=2),
+    marker=dict(size=8, symbol="circle"),
+    hovertemplate="<b>%{customdata[0]}</b><br>Average Rating: %{y:.2f}<br>Author: %{customdata[1]}<extra></extra>",
+    customdata=filtered_df[["title", "author"]].values
+))
+
+fig2.add_trace(go.Scatter(
+    x=filtered_df["date"],
+    y=filtered_df["avg_rating_line"],
+    mode="lines",
+    name=f"Average All",
+    line=dict(color="#E8554C", width=2, dash="dash"),
+))
+
+fig2.update_layout(
+    hovermode="x unified",
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=-0.3,
+        xanchor="left",
+        x=0
+    ),
 )
-fig2.update_traces(line_color="#F4845F", marker_size=8)
-fig2.update_layout(hovermode="x unified")
+
 st.plotly_chart(fig2, use_container_width=True)
 
 # -------------------------------------------------------
-# CHART 3 — Average Rating Over Time
+# CHART 3 — % Positive Ratings Over Time
 # -------------------------------------------------------
-st.subheader("⭐ Average Rating Over Time")
+st.subheader("👍 % Positive Ratings (4s and 5s)")
 
-fig3 = px.bar(
-    filtered_df,
-    x="date",
-    y="avg_rating",
-    hover_name="title",
-    hover_data={"author": True, "avg_rating": ":.2f"},
-    labels={"date": "Date", "avg_rating": "Average Rating"},
-    color="avg_rating",
-    color_continuous_scale="Blues",
+avg_pct_positive_mean = means["avg_pct_positive"]
+filtered_df["avg_pct_positive_line"] = avg_pct_positive_mean
+
+fig3 = go.Figure()
+
+# LINE 1 — The actual % Positive per newsletter (green)
+fig3.add_trace(go.Scatter(
+    x=filtered_df["date"],
+    y=filtered_df["pct_positive"],
+    mode="lines+markers",
+    name="4s And 5s %",
+    line=dict(color="#4C9BE8", width=2),
+    marker=dict(size=8, symbol="circle"),
+    hovertemplate="<b>%{customdata[0]}</b><br>% Positive: %{y:.1f}%<br>Author: %{customdata[1]}<extra></extra>",
+    customdata=filtered_df[["title", "author"]].values
+))
+
+# LINE 2 — The global mean from cell F1 (red dashed)
+fig3.add_trace(go.Scatter(
+    x=filtered_df["date"],
+    y=filtered_df["avg_pct_positive_line"],
+    mode="lines",
+    name="Average All %",
+    line=dict(color="#E8554C", width=2, dash="dash"),
+))
+
+fig3.update_layout(
+    hovermode="x unified",
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=-0.3,
+        xanchor="left",
+        x=0
+    ),
 )
-fig3.update_layout(coloraxis_showscale=False)
+
 st.plotly_chart(fig3, use_container_width=True)
 
 # -------------------------------------------------------
-# CHART 4 — Raw Opens and Clicks Over Time
+# CHART 4 — % Negative Ratings Over Time
 # -------------------------------------------------------
-st.subheader("📊 Raw Opens & Clicks Over Time")
+st.subheader("👎 % Negative Ratings (1s)")
 
-fig4 = px.line(
-    filtered_df,
-    x="date",
-    y=["opens_raw", "clicks_raw"],
-    hover_name="title",
-    markers=True,
-    labels={"date": "Date", "value": "Count", "variable": "Metric"},
+avg_pct_negative_mean = means["avg_pct_negative"]
+filtered_df["avg_pct_negative_line"] = avg_pct_negative_mean
+
+fig4 = go.Figure()
+
+# LINE 1 — The actual % Negative per newsletter (red)
+fig4.add_trace(go.Scatter(
+    x=filtered_df["date"],
+    y=filtered_df["pct_negative"],
+    mode="lines+markers",
+    name="% (1s)",
+    line=dict(color="#4C9BE8", width=2),
+    marker=dict(size=8, symbol="circle"),
+    hovertemplate="<b>%{customdata[0]}</b><br>% Negative: %{y:.1f}%<br>Author: %{customdata[1]}<extra></extra>",
+    customdata=filtered_df[["title", "author"]].values
+))
+
+# LINE 2 — The global mean from cell G1 (dashed)
+fig4.add_trace(go.Scatter(
+    x=filtered_df["date"],
+    y=filtered_df["avg_pct_negative_line"],
+    mode="lines",
+    name="Average All %",
+    line=dict(color="#E8554C", width=2, dash="dash"),
+))
+
+fig4.update_layout(
+    hovermode="x unified",
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=-0.3,
+        xanchor="left",
+        x=0
+    ),
 )
-fig4.update_layout(hovermode="x unified")
+
 st.plotly_chart(fig4, use_container_width=True)
 
 # -------------------------------------------------------

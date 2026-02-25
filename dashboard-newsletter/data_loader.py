@@ -121,10 +121,15 @@ def load_means():
     """
     df_means = pd.read_csv(SHEET_URL, header=None, nrows=1)
 
-    avg_open_rate = clean_number(df_means.iloc[0, 3])
+    avg_open_rate = clean_number(df_means.iloc[0, 3])  # D1 - Open Rate
+    avg_rating    = clean_number(df_means.iloc[0, 4])  # E1 - Average Rating
+    avg_pct_positive = clean_number(df_means.iloc[0, 5])  # F1 - % 4s and 5s
+    avg_pct_negative = clean_number(df_means.iloc[0, 6])  # G1 - % 1s
 
-    # We return a dictionary so it is easy to add more
-    # mean values here later (clicks, ratings, etc.)
     return {
-        "avg_open_rate": avg_open_rate,
+        "avg_open_rate":    avg_open_rate,
+        "avg_rating":       avg_rating,
+        "avg_pct_positive": avg_pct_positive,
+        "avg_pct_negative": avg_pct_negative,
+
     }
