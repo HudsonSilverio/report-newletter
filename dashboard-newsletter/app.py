@@ -10,7 +10,7 @@ import sys
 # Tells Python to look in the current folder for modules
 sys.path.insert(0, ".")
 
-from data_loader import load_data
+from data_loader import load_data, load_means
 
 # -------------------------------------------------------
 # PAGE CONFIGURATION
@@ -27,6 +27,8 @@ st.set_page_config(
 # -------------------------------------------------------
 df = load_data()
 
+means = load_means()
+avg_open = means["avg_open_rate"]  # comes from cell D1 of your sheet
 # -------------------------------------------------------
 # HEADER
 # -------------------------------------------------------
@@ -96,19 +98,55 @@ st.sidebar.markdown(f"**{len(filtered_df)} newsletters** selected")
 # -------------------------------------------------------
 # CHART 1 — Open Rate Over Time
 # -------------------------------------------------------
-st.subheader("📬 Open Rate Over Time (%)")
+# -------------------------------------------------------
+# CHART 1 — Open Rate Over Time
+# -------------------------------------------------------
+st.subheader("📬 Open (%)")
 
-fig1 = px.line(
-    filtered_df,
-    x="date",
-    y="opens_pct",
-    hover_name="title",       # shows the title when you hover
-    hover_data={"author": True, "opens_pct": ":.1f"},
-    markers=True,             # shows a dot at each data point
-    labels={"date": "Date", "opens_pct": "Open Rate (%)"},
+# Create a new column in the dataframe with that average value
+# Every row gets the same number — this creates a flat horizontal line
+filtered_df["avg_opens_line"] = avg_open
+
+# Build the chart with TWO lines using go (Graph Objects)
+# px.line only draws one line easily — go gives us full control
+import plotly.graph_objects as go
+
+fig1 = go.Figure()
+
+# LINE 1 — The actual Open Rate per newsletter (blue)
+fig1.add_trace(go.Scatter(
+    x=filtered_df["date"],
+    y=filtered_df["opens_pct"],
+    mode="lines+markers",       # line AND dots
+    name="Open %",              # this is the legend label
+    line=dict(color="#4C9BE8", width=2),
+    marker=dict(size=8),
+    hovertemplate="<b>%{customdata[0]}</b><br>Author: %{customdata[1]}<br>Open Rate: %{y:.1f}%<extra></extra>",
+    customdata=filtered_df[["title", "author"]].values
+))
+
+# LINE 2 — The average line (red, dashed)
+fig1.add_trace(go.Scatter(
+    x=filtered_df["date"],
+    y=filtered_df["avg_opens_line"],
+    mode="lines",               # only line, no dots
+    name=f"Average Open % Across All Newsletters",  # legend label
+    line=dict(color="#E8554C", width=2, dash="dash"),  # dashed red line
+))
+
+fig1.update_layout(
+    hovermode="x unified",
+    legend=dict(
+        orientation="h",        # horizontal legend
+        yanchor="bottom",
+        y=-0.3,                 # places legend below the chart
+        xanchor="left",
+        x=0
+    ),
+    xaxis_title="Date",
+    yaxis_title="Open Rate (%)",
 )
-fig1.update_traces(line_color="#4C9BE8", marker_size=8)
-fig1.update_layout(hovermode="x unified")
+
 st.plotly_chart(fig1, use_container_width=True)
 
 # -------------------------------------------------------

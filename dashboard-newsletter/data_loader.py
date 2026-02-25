@@ -104,3 +104,27 @@ def load_data():
     df = df.sort_values("date").reset_index(drop=True)
 
     return df
+
+# -------------------------------------------------------
+# NEW FUNCTION — reads only the Means row (row 1)
+# -------------------------------------------------------
+@st.cache_data(ttl=3600)
+def load_means():
+    """
+    Reads ONLY the first row of the sheet (the Means row).
+    
+    header=None → pandas does NOT treat row 1 as column names,
+                  so we can read it as actual data
+    nrows=1     → reads only 1 row, faster than loading everything
+    iloc[0, 3]  → row 0 (first row), column 3 (D = 0:A, 1:B, 2:C, 3:D)
+                  this is exactly cell D1 in your sheet
+    """
+    df_means = pd.read_csv(SHEET_URL, header=None, nrows=1)
+
+    avg_open_rate = clean_number(df_means.iloc[0, 3])
+
+    # We return a dictionary so it is easy to add more
+    # mean values here later (clicks, ratings, etc.)
+    return {
+        "avg_open_rate": avg_open_rate,
+    }
