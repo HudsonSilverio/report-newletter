@@ -1,34 +1,16 @@
-[project]
+[tool.poetry]
 name = "dashboard-newsletter"
 version = "0.1.0"
 description = ""
-authors = [
-    {name = "hudson_silverio",email = "hudsonpksj@gmail.com"}
-]
-readme = "README.md"
-requires-python = ">=3.13"
-dependencies = [
-    "pandas (>=1.4.0,<3)",
-    "streamlit (>=1.54.0,<2.0.0)",
-    "plotly (>=6.5.2,<7.0.0)"
-]
+authors = ["hudson_silverio <hudsonpksj@gmail.com>"]
+package-mode = false
 
-[tool.poetry]
-packages = [{include = "dashboard_newsletter", from = "src"}]
+[tool.poetry.dependencies]
+python = ">=3.13,<3.14"
+pandas = ">=1.4.0,<3"
+streamlit = ">=1.54.0,<2.0.0"
+plotly = ">=6.5.2,<7.0.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
-
-[tool.poetry]
-name = "dashboard-newsletter"
-version = "0.1.0"
-description = ""
-package-mode = false        # ← this line must be here
-readme = "README.md"        # ← also remove or comment this line
-
-[tool.poetry.dependencies]
-python = "^3.13"
-streamlit = "^1.54.0"
-plotly = "^6.5.2"
-pandas = ">=1.4.0,<3"
