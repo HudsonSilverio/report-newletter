@@ -76,11 +76,12 @@ with col3:
     )
 
 with col4:
+    delta_negative = latest['pct_negative'] - means['avg_pct_negative']
     st.metric(
         label="% 1s",
         value=f"{latest['pct_negative']:.0f}%",
-        delta=f"{latest['pct_negative'] - means['avg_pct_negative']:.0f}% vs avg {means['avg_pct_negative']:.0f}%",
-        delta_color="inverse"  # for negative ratings, lower is BETTER so we invert the arrow color
+        delta=delta_negative,  # passing a NUMBER, not a string
+        delta_color="normal"
     )
 
 st.divider()
