@@ -53,26 +53,30 @@ st.divider()
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    # delta shows the difference between latest and the all-time average
-    # if positive → green arrow, if negative → red arrow
+    delta_opens = latest['opens_pct'] - means['avg_open_rate']
     st.metric(
         label="Opens %",
         value=f"{latest['opens_pct']:.1f}%",
-        delta=f"{latest['opens_pct'] - means['avg_open_rate']:.1f}% vs avg {means['avg_open_rate']:.2f}%"
+        delta=f"{delta_opens:.1f}% vs avg {means['avg_open_rate']:.1f}%",
+        delta_color="normal"
     )
 
 with col2:
+    delta_rating = latest['avg_rating'] - means['avg_rating']
     st.metric(
         label="Average Rating",
         value=f"{latest['avg_rating']:.1f}",
-        delta=f"{latest['avg_rating'] - means['avg_rating']:.2f} vs avg {means['avg_rating']:.2f}"
+        delta=f"{delta_rating:.2f} vs avg {means['avg_rating']:.2f}",
+        delta_color="normal"
     )
 
 with col3:
+    delta_positive = latest['pct_positive'] - means['avg_pct_positive']
     st.metric(
         label="% 4s and 5s",
         value=f"{latest['pct_positive']:.0f}%",
-        delta=f"{latest['pct_positive'] - means['avg_pct_positive']:.0f}% vs avg {means['avg_pct_positive']:.0f}%"
+        delta=f"{delta_positive:.0f}% vs avg {means['avg_pct_positive']:.0f}%",
+        delta_color="normal"
     )
 
 with col4:
@@ -80,7 +84,7 @@ with col4:
     st.metric(
         label="% 1s",
         value=f"{latest['pct_negative']:.0f}%",
-        delta=delta_negative,  # passing a NUMBER, not a string
+        delta=f"{delta_negative:.0f}% vs avg {means['avg_pct_negative']:.0f}%",
         delta_color="normal"
     )
 
