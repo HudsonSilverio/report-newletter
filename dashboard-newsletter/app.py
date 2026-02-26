@@ -32,7 +32,7 @@ avg_open = means["avg_open_rate"]  # comes from cell D1 of your sheet
 # -------------------------------------------------------
 # HEADER
 # -------------------------------------------------------
-st.title("📧 Clearer Thinking Newsletter Dashboard")
+st.title("Clearer Thinking Newsletter Dashboard")
 st.markdown("Interactive timeline of newsletter metrics")
 st.divider()
 
@@ -43,7 +43,7 @@ st.divider()
 # Gets the most recent newsletter (last row after sorting by date)
 latest = df.sort_values("date", ascending=False).iloc[0]
 
-st.subheader("📬 Latest Newsletter")
+st.subheader("Latest Newsletter")
 st.markdown(f"### {latest['title']}")
 st.markdown(f"**Author:** {latest['author']} &nbsp;&nbsp;|&nbsp;&nbsp; **Sent on:** {latest['date'].strftime('%b %d, %Y')} &nbsp;&nbsp;|&nbsp;&nbsp; **Audience:** {latest['audience']}")
 
@@ -84,6 +84,8 @@ with col4:
     )
 
 st.divider()
+
+st.subheader("Historical data")
 
 # # -------------------------------------------------------
 # # TOP KPI CARDS
@@ -326,15 +328,15 @@ fig4.update_layout(
 
 st.plotly_chart(fig4, use_container_width=True)
 
-# -------------------------------------------------------
-# DATA TABLE
-# Shows the raw data at the bottom so the user can inspect it
-# -------------------------------------------------------
-st.divider()
-st.subheader("📋 Raw Data Table")
+# # -------------------------------------------------------
+# # DATA TABLE
+# # Shows the raw data at the bottom so the user can inspect it
+# # -------------------------------------------------------
+# st.divider()
+# st.subheader("📋 Raw Data Table")
 
-st.dataframe(
-    filtered_df[["date", "title", "author", "opens_pct", "clicks_pct", "avg_rating", "opens_raw", "clicks_raw"]].sort_values("date", ascending=False),
-    use_container_width=True,
-    hide_index=True,
-)
+# st.dataframe(
+#     filtered_df[["date", "title", "author", "opens_pct", "clicks_pct", "avg_rating", "opens_raw", "clicks_raw"]].sort_values("date", ascending=False),
+#     use_container_width=True,
+#     hide_index=True,
+# )
