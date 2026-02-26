@@ -202,36 +202,38 @@ def load_data():
 
     # Rename by position — immune to spacing/capitalization issues
     # This matches exactly the column order in your CSV file
+    # AFTER
     df.columns = [
         "title",            # A - Title
         "author",           # B - Author(s)
         "date",             # C - Date
-        "opens_pct",        # D - Opens %
-        "avg_rating",       # E - Average rating
-        "pct_positive",     # F - % 4s and 5s
-        "pct_negative",     # G - % 1s
-        "stars_5",          # H - 5★ Excellent
-        "stars_4",          # I - 4★ Good
-        "stars_3",          # J - 3★ Okay
-        "stars_2",          # K - 2★ Subpar
-        "stars_1",          # L - 1★ Bad
-        "unsubscribes",     # M - Unsubscribe clicks
-        "tool_starts",      # N - Tool starts
-        "topics",           # O - Topics
-        "author_excited",   # P - Author particularly excited?
-        "high_value",       # Q - Is it a high value read?
-        "listacle",         # R - Listacle format?
-        "is_general",       # S - Is it general (not niche)?
-        "controversial",    # T - Controversial?
-        "life_applicable",  # U - Life-applicable?
-        "day_posted",       # V - Day posted
-        "native_ads_nonsw", # W - Native ads for non-SW projects?
-        "native_ads_sw",    # X - Native ads for SW projects?
-        "clicks_pct",       # Y - Clicks %
-        "opens_raw",        # Z - Opens Raw
-        "clicks_raw",       # AA - Clicks Raw
-        "num_ratings",      # AB - Number of ratings
-        "views",            # AC - Views on site
+        "audience",         # D - Audience ← NEW
+        "opens_pct",        # E - Opens %
+        "avg_rating",       # F - Average rating
+        "pct_positive",     # G - % 4s and 5s
+        "pct_negative",     # H - % 1s
+        "stars_5",          # I - 5★ Excellent
+        "stars_4",          # J - 4★ Good
+        "stars_3",          # K - 3★ Okay
+        "stars_2",          # L - 2★ Subpar
+        "stars_1",          # M - 1★ Bad
+        "unsubscribes",     # N - Unsubscribe clicks
+        "tool_starts",      # O - Tool starts
+        "topics",           # P - Topics
+        "author_excited",   # Q - Author particularly excited?
+        "high_value",       # R - Is it a high value read?
+        "listacle",         # S - Listacle format?
+        "is_general",       # T - Is it general (not niche)?
+        "controversial",    # U - Controversial?
+        "life_applicable",  # V - Life-applicable?
+        "day_posted",       # W - Day posted
+        "native_ads_nonsw", # X - Native ads for non-SW projects?
+        "native_ads_sw",    # Y - Native ads for SW projects?
+        "clicks_pct",       # Z - Clicks %
+        "opens_raw",        # AA - Opens Raw
+        "clicks_raw",       # AB - Clicks Raw
+        "num_ratings",      # AC - Number of ratings
+        "views",            # AD - Views on site
     ]
 
     # List of columns that need number cleaning
@@ -277,10 +279,10 @@ def load_means():
     """
     df_means = pd.read_csv(SHEET_URL, header=None, nrows=1)
 
-    avg_open_rate    = clean_number(df_means.iloc[0, 3])  # D1 - Open Rate
-    avg_rating       = clean_number(df_means.iloc[0, 4])  # E1 - Average Rating
-    avg_pct_positive = clean_number(df_means.iloc[0, 5])  # F1 - % 4s and 5s
-    avg_pct_negative = clean_number(df_means.iloc[0, 6])  # G1 - % 1s
+    avg_open_rate    = clean_number(df_means.iloc[0, 4])  # E1 - Open Rate
+    avg_rating       = clean_number(df_means.iloc[0, 5])  # F1 - Average Rating
+    avg_pct_positive = clean_number(df_means.iloc[0, 6])  # G1 - % 4s and 5s
+    avg_pct_negative = clean_number(df_means.iloc[0, 7])  # H1 - % 1s
 
     return {
         "avg_open_rate":    avg_open_rate    or 0.0,

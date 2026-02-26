@@ -45,7 +45,7 @@ latest = df.sort_values("date", ascending=False).iloc[0]
 
 st.subheader("📬 Latest Newsletter")
 st.markdown(f"### {latest['title']}")
-st.markdown(f"**Author:** {latest['author']} &nbsp;&nbsp;|&nbsp;&nbsp; **Sent on:** {latest['date'].strftime('%b %d, %Y')}")
+st.markdown(f"**Author:** {latest['author']} &nbsp;&nbsp;|&nbsp;&nbsp; **Sent on:** {latest['date'].strftime('%b %d, %Y')} &nbsp;&nbsp;|&nbsp;&nbsp; **Audience:** {latest['audience']}")
 
 st.divider()
 
