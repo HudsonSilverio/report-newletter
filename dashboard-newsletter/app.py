@@ -88,43 +88,22 @@ st.divider()
 
 st.subheader("Historical data")
 
-# # -------------------------------------------------------
-# # TOP KPI CARDS
-# # These show the most important numbers at a glance
-# # -------------------------------------------------------
-# col1, col2, col3, col4 = st.columns(4)
-
-# with col1:
-#     avg_opens = df["opens_pct"].mean()
-#     st.metric(label="Opens %", value=f"{avg_opens:.1f}%")
-
-# with col3:
-#     avg_rating = df["avg_rating"].mean()
-#     st.metric(label="Avg Rating", value=f"{avg_rating:.2f}")
-
-# with col3:
-#     pct_positive = df["pct_positive"].mean()
-#     st.metric(label="4s And 5s %", value=f"{pct_positive:.2f}%")
-
-# with col4:
-#     pct_negative = df["pct_negative"].mean()
-#     st.metric(label="% (1s)", value=f"{pct_negative:.2f}")
-
-# st.divider()
-
-# -------------------------------------------------------
-# SIDEBAR FILTERS
-# The sidebar lets the user filter the data
-# -------------------------------------------------------
 st.sidebar.header("🔍 Filters")
 
 # Date range filter
 min_date = df["date"].min().date()
 max_date = df["date"].max().date()
 
-date_range = st.sidebar.date_input(
-    "Date range",
-    value=(min_date, max_date),
+start_date = st.sidebar.date_input(
+    "Start",
+    value=min_date,
+    min_value=min_date,
+    max_value=max_date
+)
+
+end_date = st.sidebar.date_input(
+    "End",
+    value=max_date,
     min_value=min_date,
     max_value=max_date
 )
@@ -136,11 +115,10 @@ selected_author = st.sidebar.selectbox("Author", all_authors)
 # Apply filters to the dataframe
 filtered_df = df.copy()
 
-if len(date_range) == 2:
-    filtered_df = filtered_df[
-        (filtered_df["date"].dt.date >= date_range[0]) &
-        (filtered_df["date"].dt.date <= date_range[1])
-    ]
+filtered_df = filtered_df[
+    (filtered_df["date"].dt.date >= start_date) &
+    (filtered_df["date"].dt.date <= end_date)
+]
 
 if selected_author != "All":
     filtered_df = filtered_df[filtered_df["author"] == selected_author]
