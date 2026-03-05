@@ -11,7 +11,7 @@ import streamlit as st
 # So we bypass the cache decorator temporarily
 import pandas as pd
 
-SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQmwFmfbdEZymO34CFSZ6xsZjLG89GaA8jOs216FsORPcwGk29uJaDLBxYs9HKaIbcS6cQSQWdEJBpm/pub?output=csv"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQmwFmfbdEZymO34CFSZ6xsZjLG89GaA8jOs216FsORPcwGk29uJaDLBxYs9HKaIbcS6cQSQWdEJBpm/pub?gid=0&single=true&output=csv"
 
 df = pd.read_csv(SHEET_URL, skiprows=1)
 

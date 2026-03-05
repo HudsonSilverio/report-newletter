@@ -1,6 +1,6 @@
 # poetry run streamlit run app.py
 # This is the main file of your Streamlit dashboard
-# Run with: poetry run streamlit run app.py
+# Run with: c
 
 import streamlit as st
 import plotly.express as px
@@ -41,7 +41,8 @@ st.divider()
 # -------------------------------------------------------
 
 # Gets the most recent newsletter (last row after sorting by date)
-latest = df.sort_values("date", ascending=False).iloc[0]
+today = pd.Timestamp.today()
+latest = df[df["date"] <= today].sort_values("date", ascending=False).iloc[0]
 
 st.subheader("Latest Newsletter")
 st.markdown(f"### {latest['title']}")
