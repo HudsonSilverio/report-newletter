@@ -6,6 +6,7 @@ import streamlit as st
 import plotly.express as px
 import pandas as pd
 import sys
+import datetime
 
 # Tells Python to look in the current folder for modules
 sys.path.insert(0, ".")
@@ -96,20 +97,22 @@ st.subheader("Historical data")
 st.sidebar.header("🔍 Filters")
 
 # Date range filter
-min_date = df["date"].min().date()
+# Hard limit — users cannot see data before this date
+MIN_ALLOWED_DATE = datetime.date(2025, 10, 30)
+
 max_date = df["date"].max().date()
 
 start_date = st.sidebar.date_input(
     "Start",
-    value=min_date,
-    min_value=min_date,
+    value=MIN_ALLOWED_DATE,
+    min_value=MIN_ALLOWED_DATE,
     max_value=max_date
 )
 
 end_date = st.sidebar.date_input(
     "End",
     value=max_date,
-    min_value=min_date,
+    min_value=MIN_ALLOWED_DATE,
     max_value=max_date
 )
 
