@@ -44,7 +44,7 @@ def translate_date(date_str):
         date_str = str(date_str).replace(pt, en)
     return date_str
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=5)
 def load_data():
     """
     Loads data from Google Sheets and returns a clean DataFrame.
