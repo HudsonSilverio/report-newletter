@@ -7,7 +7,7 @@ import streamlit as st
 # Your Google Sheet public CSV link
 # This works because you made the sheet public
 # -------------------------------------------------------
-SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQmwFmfbdEZymO34CFSZ6xsZjLG89GaA8jOs216FsORPcwGk29uJaDLBxYs9HKaIbcS6cQSQWdEJBpm/pub?output=csv"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQwWEWBYLicqV5OamR93b1dEDYiRdQL0oNKcnRXwOCNfgJTGkUi9jS0uZYJcBLsF-P-D3zj90aQRLSy/pub?output=csv"
 
 # -------------------------------------------------------
 # Portuguese month names → English
