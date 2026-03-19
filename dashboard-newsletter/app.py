@@ -51,8 +51,8 @@ st.markdown(f"**Author:** {latest['author']} &nbsp;&nbsp;|&nbsp;&nbsp; **Sent on
 
 st.divider()
 
-# 4 columns — one for each metric
-col1, col2, col3, col4 = st.columns(4)
+# 5 columns — one for each metric
+col1, col2, col3, col4, col5 = st.columns(5)
 
 with col1:
     delta_opens = latest['opens_pct'] - means['avg_open_rate']
@@ -89,6 +89,16 @@ with col4:
         delta=f"{delta_negative:.0f}% vs avg {means['avg_pct_negative']:.0f}%",
         delta_color="normal"
     )
+
+with col5:
+    total_ratings_val = latest['total_ratings']
+    if total_ratings_val is not None and not pd.isna(total_ratings_val):
+        st.metric(
+            label="Total Ratings",
+            value=f"{int(total_ratings_val):,}",
+        )
+    else:
+        st.metric(label="Total Ratings", value="—")
 
 st.divider()
 
@@ -314,6 +324,39 @@ fig4.update_layout(
 )
 
 st.plotly_chart(fig4, use_container_width=True)
+
+# -------------------------------------------------------
+# CHART 5 — Total Ratings Over Time
+# -------------------------------------------------------
+st.subheader("🗳️ Total Ratings")
+
+fig5 = go.Figure()
+
+fig5.add_trace(go.Scatter(
+    x=filtered_df["date"],
+    y=filtered_df["total_ratings"],
+    mode="lines+markers",
+    name="Total Ratings",
+    line=dict(color="#4C9BE8", width=2),
+    marker=dict(size=8, symbol="circle"),
+    hovertemplate="<b>%{customdata[0]}</b><br>Total Ratings: %{y:.0f}<br>Author: %{customdata[1]}<extra></extra>",
+    customdata=filtered_df[["title", "author"]].values
+))
+
+fig5.update_layout(
+    hovermode="x unified",
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=-0.3,
+        xanchor="left",
+        x=0
+    ),
+    xaxis_title="Date",
+    yaxis_title="Total Ratings",
+)
+
+st.plotly_chart(fig5, use_container_width=True)
 
 # # -------------------------------------------------------
 # # DATA TABLE

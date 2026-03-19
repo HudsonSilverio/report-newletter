@@ -77,8 +77,9 @@ def load_data():
         "stars_3",          # K - 3★ Okay
         "stars_2",          # L - 2★ Subpar
         "stars_1",          # M - 1★ Bad
-        "unsubscribes",     # N - Unsubscribe clicks
-        "tool_starts",      # O - Tool starts
+        "total_ratings",     # N - Total Ratings
+        "unsub_clicks",     # O - Unsubscribe clicks
+        "tool_starts",      # P - Tool starts
         "topics",           # P - Topics
         "author_excited",   # Q - Author particularly excited?
         "high_value",       # R - Is it a high value read?
@@ -99,7 +100,7 @@ def load_data():
     # List of columns that need number cleaning
     number_cols = [
         "opens_pct", "clicks_pct", "opens_raw", "clicks_raw",
-        "views", "unsubscribes", "tool_starts", "avg_rating",
+        "views", "total_ratings", "tool_starts", "avg_rating",
         "pct_positive", "pct_negative", "num_ratings"
     ]
 
