@@ -60,14 +60,15 @@ def load_data():
     # skiprows=1 skips the first "Means" row in your sheet
     df = pd.read_csv(SHEET_URL, skiprows=1)
 
-    # Rename by position — immune to spacing/capitalization issues
-    # This matches exactly the column order in your CSV file
-    # AFTER
-    df.columns = [
+    # Log actual column count to help debug mismatches on Streamlit Cloud
+    print(f"[load_data] CSV has {len(df.columns)} columns: {list(df.columns)}")
+
+    # Expected column names in positional order (A → AD)
+    expected_names = [
         "title",            # A - Title
         "author",           # B - Author(s)
         "date",             # C - Date
-        "audience",         # D - Audience ← NEW
+        "audience",         # D - Audience
         "opens_pct",        # E - Opens %
         "avg_rating",       # F - Average rating
         "pct_positive",     # G - % 4s and 5s
@@ -96,6 +97,18 @@ def load_data():
         "views",            # AD - Views on site
     ]
 
+    # Defensive check: warn if counts differ (won't crash — rename only goes as far as the shorter list)
+    if len(df.columns) != len(expected_names):
+        print(f"[load_data] WARNING: expected {len(expected_names)} columns, got {len(df.columns)}")
+
+    # Rename only the columns that actually exist by position; extra/missing columns are left as-is
+    rename_map = {
+        df.columns[i]: name
+        for i, name in enumerate(expected_names)
+        if i < len(df.columns)
+    }
+    df = df.rename(columns=rename_map)
+
     # List of columns that need number cleaning
     number_cols = [
         "opens_pct", "clicks_pct", "opens_raw", "clicks_raw",
@@ -123,7 +136,7 @@ def load_data():
 # -------------------------------------------------------
 # Reads only the Means row (row 1)
 # -------------------------------------------------------
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=5)
 def load_means():
     """
     Reads ONLY the first row of the sheet (the Means row).

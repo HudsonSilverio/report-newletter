@@ -59,7 +59,7 @@ with col1:
     st.metric(
         label="Opens %",
         value=f"{latest['opens_pct']:.1f}%",
-        delta=f"{delta_opens:.1f}% vs avg {means['avg_open_rate']:.1f}%",
+        delta=f"{delta_opens:.2f}% vs avg {means['avg_open_rate']:.2f}%",
         delta_color="normal"
     )
 
