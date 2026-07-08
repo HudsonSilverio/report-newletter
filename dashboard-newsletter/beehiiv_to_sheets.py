@@ -1,8 +1,9 @@
 """
-Beehiiv → Google Sheets integration script.
+Beehiiv + Wix -> Google Sheets integration script.
 
-Fetches newsletter data from the Beehiiv API and inserts a new row
-into the Google Sheets spreadsheet used by the Streamlit dashboard.
+Fetches newsletter data from the Beehiiv API, inserts a new row
+into the Google Sheets spreadsheet used by the Streamlit dashboard,
+and fetches Wix form comments (star ratings) into the Comments tabs.
 
 Usage:
     python beehiiv_to_sheets.py "Newsletter Title Here"
@@ -12,7 +13,7 @@ Usage:
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import gspread
 import requests
@@ -35,6 +36,31 @@ if not os.path.isabs(GOOGLE_CREDENTIALS_PATH):
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 
 BEEHIIV_BASE_URL = "https://api.beehiiv.com/v2"
+
+# Wix configuration
+WIX_IST_TOKEN = os.getenv("WIX_IST_TOKEN", "")
+WIX_SITE_ID = os.getenv("WIX_SITE_ID", "")
+
+WIX_FORM_IDS = {
+    5: "f3a3156c-70ab-4fa1-b5d4-612af837bc92",
+    4: "b1e62313-8fdd-400f-8f9e-63b290c34b1c",
+    3: "dac92d59-eeee-479d-baaf-4ba5e1c8a6e6",
+    2: "182b4778-30f2-4430-832a-651a04d53abf",
+    1: "54b6519e-09f7-42ba-abc9-49d49b4d482e",
+}
+
+WIX_COMMENT_FIELD = "please_write_your_comments_below"
+
+STAR_TAB_NAMES = {
+    5: "5\u2605 Comments",
+    4: "4\u2605 Comments",
+    3: "3\u2605 Comments",
+    2: "2\u2605 Comments",
+    1: "1\u2605 Comments",
+}
+
+# EST timezone offset (UTC-5)
+EST_OFFSET = timezone(timedelta(hours=-5))
 
 # Star-rating URL patterns (case-insensitive substring match)
 # Matched against base_url or url of each click entry.
@@ -163,6 +189,137 @@ def extract_date(post):
         dt = datetime.fromtimestamp(publish_ts, tz=timezone.utc)
         return dt.strftime("%b %d, %Y")
     return ""
+
+
+# -------------------------------------------------------
+# Wix Form Submissions
+# -------------------------------------------------------
+def parse_date_range(date_input):
+    """
+    Parse date range string in format:
+      'De: Jun 25th, 2026 8:00 PM ate: Jul 1st, 2026 8:00 PM'
+    Returns (from_utc, to_utc) as ISO-8601 strings in UTC.
+    Input times are assumed to be EST (UTC-5).
+    """
+    # Split on 'ate:' (case-insensitive)
+    parts = re.split(r'\s*[Aa]t[eé]:\s*', date_input)
+    if len(parts) != 2:
+        raise ValueError("Use format: De: Jun 25th, 2026 8:00 PM ate: Jul 1st, 2026 8:00 PM")
+
+    raw_from = parts[0].strip()
+    raw_to = parts[1].strip()
+
+    # Remove 'De:' prefix
+    raw_from = re.sub(r'^[Dd]e:\s*', '', raw_from).strip()
+
+    def parse_single(s):
+        # Remove ordinal suffixes: 1st, 2nd, 3rd, 4th-31th
+        s = re.sub(r'(\d+)(st|nd|rd|th)', r'\1', s)
+        # Try parsing
+        for fmt in ("%b %d, %Y %I:%M %p", "%b %d, %Y %I %p", "%b %d, %Y"):
+            try:
+                dt = datetime.strptime(s.strip(), fmt)
+                # Attach EST timezone, then convert to UTC
+                dt_est = dt.replace(tzinfo=EST_OFFSET)
+                dt_utc = dt_est.astimezone(timezone.utc)
+                return dt_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            except ValueError:
+                continue
+        raise ValueError(f"Could not parse date: '{s}'")
+
+    return parse_single(raw_from), parse_single(raw_to)
+
+
+def fetch_wix_comments(form_id, date_from_utc, date_to_utc):
+    """
+    Fetch all non-empty comments from a Wix form within a date range.
+    Uses cursor-based pagination. Returns list of comment strings.
+    """
+    headers = {
+        "Authorization": WIX_IST_TOKEN,
+        "wix-site-id": WIX_SITE_ID,
+        "Content-Type": "application/json",
+    }
+
+    comments = []
+    cursor = None
+
+    while True:
+        paging = {"limit": 100}
+        if cursor:
+            paging["cursor"] = cursor
+
+        query_filter = {
+            "$and": [
+                {"namespace": "wix.form_app.form"},
+                {"formId": form_id},
+                {"createdDate": {"$gte": date_from_utc}},
+                {"createdDate": {"$lte": date_to_utc}},
+            ]
+        }
+
+        body = {
+            "query": {
+                "filter": query_filter,
+                "sort": [{"fieldName": "createdDate", "order": "DESC"}],
+                "cursorPaging": paging,
+            },
+            "onlyYourOwn": False,
+        }
+
+        resp = requests.post(
+            "https://www.wixapis.com/form-submission-service/v4/submissions/namespace/query",
+            headers=headers,
+            json=body,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        for sub in data.get("submissions", []):
+            fields = sub.get("submissions", {})
+            comment = (fields.get(WIX_COMMENT_FIELD) or "").strip()
+            if comment:
+                comments.append(comment)
+
+        # Check pagination
+        metadata = data.get("pagingMetadata", data.get("metadata", {}))
+        if metadata.get("hasNext"):
+            cursors = metadata.get("cursors", {})
+            cursor = cursors.get("next")
+            if not cursor:
+                break
+        else:
+            break
+
+    return comments
+
+
+def insert_comments_to_sheets(spreadsheet, title, star_comments):
+    """
+    Insert comments into each star Comments tab.
+    For each star rating, inserts a new column B with:
+      B1 = newsletter title
+      B2 = count of comments
+      B3+ = individual comments
+    """
+    for star_rating in [5, 4, 3, 2, 1]:
+        tab_name = STAR_TAB_NAMES[star_rating]
+        comments = star_comments.get(star_rating, [])
+
+        try:
+            ws = spreadsheet.worksheet(tab_name)
+        except gspread.exceptions.WorksheetNotFound:
+            print(f"  Tab '{tab_name}' not found, skipping.")
+            continue
+
+        # Build column data: [title, count, comment1, comment2, ...]
+        col_data = [title, str(len(comments))] + comments
+
+        # Insert as column B (index 2), pushing existing columns right
+        ws.insert_cols([col_data], col=2)
+
+        print(f"  {star_rating}* Comments: {len(comments)} comments inserted into '{tab_name}'")
 
 
 # -------------------------------------------------------
@@ -308,6 +465,31 @@ def main():
         print("No title provided. Exiting.")
         sys.exit(1)
 
+    # Get date range for Wix comments
+    has_wix = bool(WIX_IST_TOKEN and WIX_SITE_ID)
+    date_from_utc = None
+    date_to_utc = None
+
+    if has_wix:
+        print("\nWix comments date range (EST timezone).")
+        print("Format: De: Jun 25th, 2026 8:00 PM ate: Jul 1st, 2026 8:00 PM")
+        date_input = input("Date range: ").strip()
+        if date_input:
+            try:
+                date_from_utc, date_to_utc = parse_date_range(date_input)
+                print(f"  From (UTC): {date_from_utc}")
+                print(f"  To   (UTC): {date_to_utc}")
+            except ValueError as e:
+                print(f"  Error parsing dates: {e}")
+                print("  Skipping Wix comments.")
+                has_wix = False
+        else:
+            print("  No date range provided. Skipping Wix comments.")
+            has_wix = False
+    else:
+        if not WIX_IST_TOKEN:
+            print("\nNote: WIX_IST_TOKEN not set in .env - Wix comments will be skipped.")
+
     # Search for the post
     print(f"\nSearching for: \"{title_query}\"...")
     post = find_post_by_title(title_query)
@@ -323,6 +505,20 @@ def main():
     open_rate = extract_open_rate(post)
     stars = extract_star_clicks(post)
 
+    # Fetch Wix comments if configured
+    star_comments = {}
+    if has_wix:
+        print("\nFetching Wix form comments...")
+        for star_rating in [5, 4, 3, 2, 1]:
+            form_id = WIX_FORM_IDS[star_rating]
+            try:
+                comments = fetch_wix_comments(form_id, date_from_utc, date_to_utc)
+                star_comments[star_rating] = comments
+                print(f"  {star_rating}*: {len(comments)} comments found")
+            except Exception as e:
+                print(f"  {star_rating}*: Error - {e}")
+                star_comments[star_rating] = []
+
     # Show summary
     print(f"\nFound post:")
     print(f"  Title:    {title}")
@@ -331,15 +527,31 @@ def main():
     print(f"  Opens %:  {open_rate}")
     print(f"  5*: {stars[5]}  4*: {stars[4]}  3*: {stars[3]}  2*: {stars[2]}  1*: {stars[1]}")
 
+    if star_comments:
+        total_comments = sum(len(c) for c in star_comments.values())
+        print(f"\n  Wix comments to insert: {total_comments} total")
+        for s in [5, 4, 3, 2, 1]:
+            count = len(star_comments.get(s, []))
+            if count:
+                print(f"    {s}*: {count} comments")
+
     # Confirm before inserting
     confirm = input("\nInsert this data into Google Sheets? (y/n): ").strip().lower()
     if confirm != "y":
         print("Cancelled.")
         sys.exit(0)
 
-    # Insert into Google Sheets
+    # Insert Beehiiv data into main sheet
     insert_row_to_sheet(title, author, date_str, open_rate, stars)
-    print("Done!")
+
+    # Insert Wix comments into Comments tabs
+    if star_comments:
+        print("\nInserting comments into Google Sheets...")
+        client = get_sheets_client()
+        spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
+        insert_comments_to_sheets(spreadsheet, title, star_comments)
+
+    print("\nDone!")
 
 
 if __name__ == "__main__":
