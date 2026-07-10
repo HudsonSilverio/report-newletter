@@ -14,6 +14,7 @@ import os
 import re
 import sys
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 import gspread
 import requests
@@ -59,8 +60,8 @@ STAR_TAB_NAMES = {
     1: "1\u2605 Comments",
 }
 
-# EST timezone offset (UTC-5)
-EST_OFFSET = timezone(timedelta(hours=-5))
+# Timezone for date input (matches Wix dashboard display)
+INPUT_TZ = ZoneInfo("America/Sao_Paulo")
 
 # Star-rating URL patterns (case-insensitive substring match)
 # Matched against base_url or url of each click entry.
@@ -194,40 +195,30 @@ def extract_date(post):
 # -------------------------------------------------------
 # Wix Form Submissions
 # -------------------------------------------------------
-def parse_date_range(date_input):
+def _parse_single_date(s):
     """
-    Parse date range string in format:
-      'De: Jun 25th, 2026 8:00 PM ate: Jul 1st, 2026 8:00 PM'
+    Parse a single date string like 'Jun 25th, 2026 8:00 PM' to UTC ISO-8601.
+    Input is assumed Eastern Time (EST/EDT handled automatically).
+    """
+    # Remove ordinal suffixes: 1st, 2nd, 3rd, 4th-31th
+    s = re.sub(r'(\d+)(st|nd|rd|th)', r'\1', s)
+    for fmt in ("%b %d, %Y %I:%M %p", "%b %d, %Y %I %p", "%b %d, %Y"):
+        try:
+            dt = datetime.strptime(s.strip(), fmt)
+            dt_eastern = dt.replace(tzinfo=INPUT_TZ)
+            dt_utc = dt_eastern.astimezone(timezone.utc)
+            return dt_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        except ValueError:
+            continue
+    raise ValueError(f"Could not parse date: '{s}'")
+
+
+def parse_date_range_split(from_str, to_str):
+    """
+    Parse two separate date strings (From / To).
     Returns (from_utc, to_utc) as ISO-8601 strings in UTC.
-    Input times are assumed to be EST (UTC-5).
     """
-    # Split on 'ate:' (case-insensitive)
-    parts = re.split(r'\s*[Aa]t[eé]:\s*', date_input)
-    if len(parts) != 2:
-        raise ValueError("Use format: De: Jun 25th, 2026 8:00 PM ate: Jul 1st, 2026 8:00 PM")
-
-    raw_from = parts[0].strip()
-    raw_to = parts[1].strip()
-
-    # Remove 'De:' prefix
-    raw_from = re.sub(r'^[Dd]e:\s*', '', raw_from).strip()
-
-    def parse_single(s):
-        # Remove ordinal suffixes: 1st, 2nd, 3rd, 4th-31th
-        s = re.sub(r'(\d+)(st|nd|rd|th)', r'\1', s)
-        # Try parsing
-        for fmt in ("%b %d, %Y %I:%M %p", "%b %d, %Y %I %p", "%b %d, %Y"):
-            try:
-                dt = datetime.strptime(s.strip(), fmt)
-                # Attach EST timezone, then convert to UTC
-                dt_est = dt.replace(tzinfo=EST_OFFSET)
-                dt_utc = dt_est.astimezone(timezone.utc)
-                return dt_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-            except ValueError:
-                continue
-        raise ValueError(f"Could not parse date: '{s}'")
-
-    return parse_single(raw_from), parse_single(raw_to)
+    return _parse_single_date(from_str), _parse_single_date(to_str)
 
 
 def fetch_wix_comments(form_id, date_from_utc, date_to_utc):
@@ -393,43 +384,47 @@ def insert_row_to_sheet(title, author, date_str, open_rate, stars):
 
 def update_means_formulas(sheet):
     """
-    Update the AVERAGE formulas in row 1 (Means row) to include
-    the expanded data range after inserting a new row.
+    Update ALL formulas in row 1 (Means row) to include
+    the newly inserted row 3.
 
-    Reads current formulas, finds the AVERAGE range end row,
-    and increments it by 1.
+    After insert_row(index=3), Google Sheets auto-adjusts references:
+      =AVERAGE(E3:E39) becomes =AVERAGE(E4:E40)
+    We need to reset the start back to row 3 so the new row is included:
+      =AVERAGE(E4:E40) becomes =AVERAGE(E3:E40)
+
+    Scans every cell in row 1 to catch all formula columns.
     """
-    means_cells = ["E1", "F1", "G1", "H1"]
+    # Read entire row 1 as formulas
+    row1 = sheet.get("1:1", value_render_option="FORMULA")
+    if not row1 or not row1[0]:
+        return
 
-    for cell_addr in means_cells:
-        try:
-            # Get the current formula
-            current = sheet.acell(cell_addr, value_render_option="FORMULA").value
-            if not current or not current.startswith("="):
-                continue
+    for col_idx, value in enumerate(row1[0]):
+        if not value or not isinstance(value, str) or not value.startswith("="):
+            continue
 
-            # Update range end: e.g. AVERAGE(E3:E35) → AVERAGE(E3:E36)
-            updated = _increment_range_end(current)
-            if updated != current:
+        cell_addr = gspread.utils.rowcol_to_a1(1, col_idx + 1)
+        updated = _fix_range_start(value, start_row=3)
+        if updated != value:
+            try:
                 sheet.update_acell(cell_addr, updated)
-                print(f"  Updated {cell_addr}: {current} -> {updated}")
-        except Exception as e:
-            print(f"  Warning: Could not update {cell_addr}: {e}")
+                print(f"  Updated {cell_addr}: {value} -> {updated}")
+            except Exception as e:
+                print(f"  Warning: Could not update {cell_addr}: {e}")
 
 
-def _increment_range_end(formula):
+def _fix_range_start(formula, start_row=3):
     """
-    Increment the end row number in range references within a formula.
-    E.g. 'AVERAGE(E3:E35)' → 'AVERAGE(E3:E36)'
+    Reset the start row of range references to include the newly inserted row.
+    The end row is left as-is (Google Sheets already adjusted it).
+    E.g. 'AVERAGE(E4:E40)' -> 'AVERAGE(E3:E40)'
     """
     def replace_range(match):
         col1 = match.group(1)
-        row1 = match.group(2)
         col2 = match.group(3)
-        row2 = int(match.group(4))
-        return f"{col1}{row1}:{col2}{row2 + 1}"
+        row2 = match.group(4)
+        return f"{col1}{start_row}:{col2}{row2}"
 
-    # Match patterns like E3:E35, F3:F35, etc.
     return re.sub(r"([A-Z]+)(\d+):([A-Z]+)(\d+)", replace_range, formula)
 
 
@@ -471,20 +466,26 @@ def main():
     date_to_utc = None
 
     if has_wix:
-        print("\nWix comments date range (EST timezone).")
-        print("Format: De: Jun 25th, 2026 8:00 PM ate: Jul 1st, 2026 8:00 PM")
-        date_input = input("Date range: ").strip()
-        if date_input:
-            try:
-                date_from_utc, date_to_utc = parse_date_range(date_input)
-                print(f"  From (UTC): {date_from_utc}")
-                print(f"  To   (UTC): {date_to_utc}")
-            except ValueError as e:
-                print(f"  Error parsing dates: {e}")
-                print("  Skipping Wix comments.")
+        print("\nWix comments date range (Brasilia time).")
+        date_from_input = input("From: ").strip()
+        if date_from_input:
+            date_to_input = input("To: ").strip()
+            if date_to_input:
+                try:
+                    date_from_utc, date_to_utc = parse_date_range_split(
+                        date_from_input, date_to_input
+                    )
+                    print(f"  From (UTC): {date_from_utc}")
+                    print(f"  To   (UTC): {date_to_utc}")
+                except ValueError as e:
+                    print(f"  Error parsing dates: {e}")
+                    print("  Skipping Wix comments.")
+                    has_wix = False
+            else:
+                print("  No end date provided. Skipping Wix comments.")
                 has_wix = False
         else:
-            print("  No date range provided. Skipping Wix comments.")
+            print("  No date provided. Skipping Wix comments.")
             has_wix = False
     else:
         if not WIX_IST_TOKEN:
