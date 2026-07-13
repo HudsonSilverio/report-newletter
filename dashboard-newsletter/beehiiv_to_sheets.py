@@ -12,8 +12,11 @@ Usage:
 
 import os
 import re
+import smtplib
 import sys
 from datetime import datetime, timezone, timedelta
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from zoneinfo import ZoneInfo
 
 import gspread
@@ -62,6 +65,16 @@ STAR_TAB_NAMES = {
 
 # Timezone for date input (matches Wix dashboard display)
 INPUT_TZ = ZoneInfo("America/Sao_Paulo")
+
+# Email configuration
+EMAIL_SENDER = os.getenv("EMAIL_SENDER", "")
+EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD", "")
+EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT", "")
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "")
+SPREADSHEET_URL = os.getenv(
+    "SPREADSHEET_URL",
+    f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}",
+)
 
 # Star-rating URL patterns (case-insensitive substring match)
 # Matched against base_url or url of each click entry.
@@ -271,6 +284,8 @@ def fetch_wix_comments(form_id, date_from_utc, date_to_utc):
             fields = sub.get("submissions", {})
             comment = (fields.get(WIX_COMMENT_FIELD) or "").strip()
             if comment:
+                # Replace line breaks with space to keep full text in one cell
+                comment = comment.replace("\r\n", " ").replace("\n", " ")
                 comments.append(comment)
 
         # Check pagination
@@ -429,6 +444,222 @@ def _fix_range_start(formula, start_row=3):
 
 
 # -------------------------------------------------------
+# Email Report
+# -------------------------------------------------------
+def compute_newsletter_metrics(open_rate, stars):
+    """Compute derived metrics from raw Beehiiv data."""
+    total = sum(stars.values())
+    # open_rate from Beehiiv is a decimal (0.452 = 45.2%)
+    open_pct = open_rate * 100 if open_rate <= 1 else open_rate
+    avg_rating = (
+        round(
+            (5 * stars[5] + 4 * stars[4] + 3 * stars[3] + 2 * stars[2] + 1 * stars[1])
+            / total,
+            1,
+        )
+        if total
+        else 0
+    )
+    pct_positive = round((stars[5] + stars[4]) / total * 100) if total else 0
+    pct_negative = round(stars[1] / total * 100) if total else 0
+    return {
+        "open_pct": round(open_pct, 1),
+        "avg_rating": avg_rating,
+        "pct_positive": pct_positive,
+        "pct_negative": pct_negative,
+        "total_ratings": total,
+    }
+
+
+def read_means_from_sheet(sheet):
+    """Read averages from row 1 (Means row) of the spreadsheet."""
+    row1 = sheet.row_values(1)
+
+    def _parse(val):
+        if not val:
+            return 0.0
+        val = str(val).replace(",", "").replace("%", "").strip()
+        try:
+            return float(val)
+        except ValueError:
+            return 0.0
+
+    return {
+        "avg_open_rate": _parse(row1[4]) if len(row1) > 4 else 0.0,
+        "avg_rating": _parse(row1[5]) if len(row1) > 5 else 0.0,
+        "avg_pct_positive": _parse(row1[6]) if len(row1) > 6 else 0.0,
+        "avg_pct_negative": _parse(row1[7]) if len(row1) > 7 else 0.0,
+    }
+
+
+def _diff_color(diff):
+    """Return inline CSS color: green for positive, red for negative, gray for zero."""
+    if diff == 0:
+        return "color:#888;"
+    if diff > 0:
+        return "color:#28a745;font-weight:bold;"
+    return "color:#dc3545;font-weight:bold;"
+
+
+def _fmt_diff(diff, suffix="", plus=True):
+    """Format a numeric difference with optional sign and suffix."""
+    sign = "+" if diff > 0 and plus else ""
+    if suffix == "%":
+        return f"{sign}{diff:.0f}%"
+    return f"{sign}{diff:.1f}{suffix}"
+
+
+def build_report_html(title, author, date_str, metrics, means, star_comments, post_url):
+    """Build the HTML email body matching the newsletter report template."""
+
+    # Compute differences
+    diff_opens = metrics["open_pct"] - means["avg_open_rate"]
+    diff_rating = metrics["avg_rating"] - means["avg_rating"]
+    diff_positive = metrics["pct_positive"] - means["avg_pct_positive"]
+    diff_negative = metrics["pct_negative"] - means["avg_pct_negative"]
+
+    # Build metrics table rows
+    metrics_rows = f"""
+    <tr>
+      <td style="padding:10px 12px;border-bottom:1px solid #eee;">Opens</td>
+      <td style="text-align:center;padding:10px;border-bottom:1px solid #eee;">{metrics['open_pct']:.1f}%</td>
+      <td style="text-align:center;padding:10px;border-bottom:1px solid #eee;">{means['avg_open_rate']:.1f}%</td>
+      <td style="text-align:center;padding:10px;border-bottom:1px solid #eee;{_diff_color(diff_opens)}">{_fmt_diff(diff_opens, '%')}</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 12px;border-bottom:1px solid #eee;">Average Rating</td>
+      <td style="text-align:center;padding:10px;border-bottom:1px solid #eee;">{metrics['avg_rating']:.1f}</td>
+      <td style="text-align:center;padding:10px;border-bottom:1px solid #eee;">{means['avg_rating']:.1f}</td>
+      <td style="text-align:center;padding:10px;border-bottom:1px solid #eee;{_diff_color(diff_rating)}">{_fmt_diff(diff_rating)}</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 12px;border-bottom:1px solid #eee;">4s and 5s</td>
+      <td style="text-align:center;padding:10px;border-bottom:1px solid #eee;">{metrics['pct_positive']}%</td>
+      <td style="text-align:center;padding:10px;border-bottom:1px solid #eee;">{means['avg_pct_positive']:.0f}%</td>
+      <td style="text-align:center;padding:10px;border-bottom:1px solid #eee;{_diff_color(diff_positive)}">{_fmt_diff(diff_positive, '%')}</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 12px;border-bottom:1px solid #eee;">1s</td>
+      <td style="text-align:center;padding:10px;border-bottom:1px solid #eee;">{metrics['pct_negative']}%</td>
+      <td style="text-align:center;padding:10px;border-bottom:1px solid #eee;">{means['avg_pct_negative']:.0f}%</td>
+      <td style="text-align:center;padding:10px;border-bottom:1px solid #eee;{_diff_color(diff_negative)}">{_fmt_diff(diff_negative, '%')}</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 12px;">Total Ratings</td>
+      <td style="text-align:center;padding:10px;">{metrics['total_ratings']}</td>
+      <td style="text-align:center;padding:10px;">—</td>
+      <td style="text-align:center;padding:10px;">—</td>
+    </tr>
+    """
+
+    # Build comments section
+    comment_labels = {
+        5: "Excellent",
+        4: "Good",
+        3: "Okay",
+        2: "Subpar",
+        1: "Bad",
+    }
+    comments_html = ""
+    for star in [5, 4, 3, 2, 1]:
+        label = comment_labels[star]
+        items = star_comments.get(star, [])
+        comments_html += f'<p style="margin:16px 0 4px;"><strong>{label}:</strong></p>\n'
+        if items:
+            comments_html += "<ul style=\"margin:4px 0;padding-left:24px;\">\n"
+            for c in items:
+                comments_html += f"  <li style=\"margin-bottom:4px;\">{c}</li>\n"
+            comments_html += "</ul>\n"
+        else:
+            comments_html += '<p style="color:#999;margin:4px 0 0 24px;">( None )</p>\n'
+
+    # Post link
+    post_link = f'<a href="{post_url}" style="color:#1a73e8;text-decoration:none;">{title}</a>' if post_url else title
+
+    html = f"""<!DOCTYPE html>
+<html>
+<body style="font-family:Arial,Helvetica,sans-serif;color:#333;margin:0;padding:20px;background-color:#f5f5f5;">
+<div style="max-width:700px;margin:0 auto;">
+
+  <p style="font-size:15px;">Hi, team!</p>
+  <p style="font-size:15px;">Here are the numbers regarding the past newsletter.</p>
+
+  <p style="font-size:15px;">
+    <a href="{DASHBOARD_URL}" style="color:#1a73e8;text-decoration:none;">Report Newsletter</a>
+    &nbsp;&nbsp;|&nbsp;&nbsp;
+    <a href="{SPREADSHEET_URL}" style="color:#1a73e8;text-decoration:none;">CT Newsletter Performance</a>
+  </p>
+
+  <p style="font-size:15px;">Post link: {post_link}</p>
+
+  <!-- Performance Card -->
+  <div style="background:#ffffff;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.12);overflow:hidden;margin:24px 0;">
+
+    <!-- Card Header -->
+    <div style="background:#1a1a2e;padding:18px 24px;">
+      <h2 style="margin:0;color:#ffffff;font-size:18px;font-weight:600;">Newsletter Performance Report</h2>
+    </div>
+
+    <!-- Card Body -->
+    <div style="padding:24px;">
+      <h3 style="margin:0 0 8px;font-size:20px;color:#222;">{title}</h3>
+      <p style="color:#666;font-size:14px;margin:0 0 16px;">
+        <strong>Author:</strong> {author}
+        &nbsp;&nbsp;|&nbsp;&nbsp;
+        <strong>Sent on:</strong> {date_str}
+        &nbsp;&nbsp;|&nbsp;&nbsp;
+        <strong>Audience:</strong> All Subscribers
+      </p>
+
+      <hr style="border:none;border-top:1px solid #eee;margin:16px 0;">
+
+      <h4 style="margin:0 0 12px;color:#555;font-size:15px;">Key Metrics</h4>
+
+      <table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <thead>
+          <tr style="background:#f8f9fa;">
+            <th style="text-align:left;padding:10px 12px;border-bottom:2px solid #dee2e6;color:#555;">Metric</th>
+            <th style="text-align:center;padding:10px;border-bottom:2px solid #dee2e6;color:#555;">Result</th>
+            <th style="text-align:center;padding:10px;border-bottom:2px solid #dee2e6;color:#555;">Avg across all newsletters</th>
+            <th style="text-align:center;padding:10px;border-bottom:2px solid #dee2e6;color:#555;">Difference</th>
+          </tr>
+        </thead>
+        <tbody>
+          {metrics_rows}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Comments Section -->
+  <p style="font-size:15px;"><strong>Below are the qualitative feedback we've received for this one:</strong></p>
+  {comments_html}
+
+  <br>
+  <p style="font-size:15px;">Best,<br>Hudson</p>
+
+</div>
+</body>
+</html>"""
+    return html
+
+
+def send_report_email(title, html_body):
+    """Send the HTML report email via Gmail SMTP."""
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"Newsletter Reporting: {title}"
+    msg["From"] = EMAIL_SENDER
+    msg["To"] = EMAIL_RECIPIENT
+    msg.attach(MIMEText(html_body, "html"))
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(EMAIL_SENDER, EMAIL_APP_PASSWORD)
+        server.send_message(msg)
+
+    print(f"\nReport email sent to {EMAIL_RECIPIENT}")
+
+
+# -------------------------------------------------------
 # Main
 # -------------------------------------------------------
 def main():
@@ -459,6 +690,10 @@ def main():
     if not title_query:
         print("No title provided. Exiting.")
         sys.exit(1)
+
+    # Ask for author and post link (user input)
+    author = input("Author(s): ").strip()
+    post_url_input = input("Post link: ").strip()
 
     # Get date range for Wix comments
     has_wix = bool(WIX_IST_TOKEN and WIX_SITE_ID)
@@ -501,7 +736,6 @@ def main():
 
     # Extract data
     title = post.get("subject_line") or post.get("title", "")
-    author = extract_authors(post)
     date_str = extract_date(post)
     open_rate = extract_open_rate(post)
     stars = extract_star_clicks(post)
@@ -545,12 +779,29 @@ def main():
     # Insert Beehiiv data into main sheet
     insert_row_to_sheet(title, author, date_str, open_rate, stars)
 
+    # Shared client for subsequent sheet operations
+    client = get_sheets_client()
+    spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
+
     # Insert Wix comments into Comments tabs
     if star_comments:
         print("\nInserting comments into Google Sheets...")
-        client = get_sheets_client()
-        spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
         insert_comments_to_sheets(spreadsheet, title, star_comments)
+
+    # Send report email
+    if EMAIL_SENDER and EMAIL_APP_PASSWORD and EMAIL_RECIPIENT:
+        print("\nPreparing report email...")
+        metrics = compute_newsletter_metrics(open_rate, stars)
+        means = read_means_from_sheet(spreadsheet.sheet1)
+        html = build_report_html(
+            title, author, date_str, metrics, means, star_comments, post_url_input
+        )
+        try:
+            send_report_email(title, html)
+        except Exception as e:
+            print(f"\nWarning: Could not send email: {e}")
+    else:
+        print("\nNote: Email not configured. Set EMAIL_SENDER, EMAIL_APP_PASSWORD, EMAIL_RECIPIENT in .env")
 
     print("\nDone!")
 
