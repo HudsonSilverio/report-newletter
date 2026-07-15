@@ -146,12 +146,42 @@ This opens the dashboard in your browser at `http://localhost:8501`.
 
 ### Running the Data Pipeline (insert data + send email)
 
+Before running the script, you need to gather some information from Beehiiv and Wix. Follow the steps below.
+
+#### Step 1 — Get the post info from Beehiiv
+
+1. Go to [app.beehiiv.com](https://app.beehiiv.com/) and log in
+2. Navigate to **Posts** in the sidebar
+3. Find the newsletter you want to report on and click on it
+4. From the post page, copy:
+   - **Title** — the subject line of the newsletter (you only need part of it; the script will search for a match)
+   - **Author(s)** — the name(s) listed as author
+
+#### Step 2 — Get the post link from the website
+
+1. Go to [clearerthinking.org](https://www.clearerthinking.org/)
+2. Find the blog post that corresponds to the newsletter
+3. Open the post and copy the full URL from your browser's address bar (e.g., `https://www.clearerthinking.org/post/ai-and-decision-making`)
+
+> **Note:** This URL is the blog post link, not the Beehiiv email link. The script will automatically fetch the page title from this URL to use in the report email.
+
+#### Step 3 — Get the date range for Wix comments
+
+1. Go to [wix.com](https://www.wix.com/) and log in to the site dashboard
+2. Navigate to **Forms & Submissions**
+3. Check when the first and last comments were submitted for this newsletter
+4. Note down the date range (in Brasilia time) — for example, `Jun 25th, 2026 8:00 PM` to `Jul 2nd, 2026 8:00 PM`
+
+> **Tip:** Use a range that covers the full period the newsletter was live. This is typically from the day it was sent until the next newsletter goes out.
+
+#### Step 4 — Run the script
+
 ```bash
 cd dashboard-newsletter
 poetry run python beehiiv_to_sheets.py
 ```
 
-The script will guide you step by step:
+The script will prompt you for the information you gathered:
 
 ```
 Enter the newsletter title (or part of it): AI and Decision Making
@@ -173,7 +203,7 @@ Insert this data into Google Sheets? (y/n): y
 After confirming, it will:
 - Insert the data into Google Sheets
 - Insert Wix comments into the comment tabs
-- Send the report email automatically
+- Save a report email draft with the post link title automatically fetched from the linked page (e.g., the actual blog post title, not the newsletter subject line)
 
 You can also pass the title directly:
 
@@ -244,6 +274,7 @@ report-newletter/
 | Email not sending | Check your `EMAIL_APP_PASSWORD` is correct and 2-Step Verification is enabled |
 | Wrong date range for comments | Check the `INPUT_TZ` timezone setting matches your region |
 | `UnicodeEncodeError` on Windows | Set the environment variable `PYTHONIOENCODING=utf-8` before running |
+| Post link title not matching the blog post | The title is fetched from the linked page's `<title>` tag; if the page is unreachable, the newsletter subject is used as fallback |
 
 ---
 

@@ -10,6 +10,8 @@ Usage:
     python beehiiv_to_sheets.py   # will prompt for the title
 """
 
+import html as html_module
+import imaplib
 import os
 import re
 import smtplib
@@ -509,6 +511,22 @@ def _fmt_diff(diff, suffix="", plus=True):
     return f"{sign}{diff:.1f}{suffix}"
 
 
+def fetch_post_title(url):
+    """Fetch the <title> of a web page from its URL."""
+    try:
+        resp = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+        resp.raise_for_status()
+        match = re.search(r"<title[^>]*>(.*?)</title>", resp.text, re.IGNORECASE | re.DOTALL)
+        if match:
+            raw = match.group(1).strip()
+            # Remove common suffixes like " | Site Name" or " - Site Name"
+            raw = re.split(r"\s*[|\u2013\u2014]\s*", raw)[0].strip()
+            return html_module.unescape(raw)
+    except Exception as e:
+        print(f"  Warning: Could not fetch title from URL: {e}")
+    return None
+
+
 def build_report_html(title, author, date_str, metrics, means, star_comments, post_url):
     """Build the HTML email body matching the newsletter report template."""
 
@@ -573,8 +591,12 @@ def build_report_html(title, author, date_str, metrics, means, star_comments, po
         else:
             comments_html += '<p style="color:#999;margin:4px 0 0 24px;">( None )</p>\n'
 
-    # Post link
-    post_link = f'<a href="{post_url}" style="color:#1a73e8;text-decoration:none;">{title}</a>' if post_url else title
+    # Post link — use the title from the linked page, not the newsletter subject
+    if post_url:
+        page_title = fetch_post_title(post_url) or title
+        post_link = f'<a href="{post_url}" style="color:#1a73e8;text-decoration:none;">{page_title}</a>'
+    else:
+        post_link = title
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -644,19 +666,24 @@ def build_report_html(title, author, date_str, metrics, means, star_comments, po
     return html
 
 
-def send_report_email(title, html_body):
-    """Send the HTML report email via Gmail SMTP."""
+def save_report_as_draft(title, html_body):
+    """Save the HTML report email as a draft in Gmail for review before sending."""
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"Newsletter Reporting: {title}"
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECIPIENT
     msg.attach(MIMEText(html_body, "html"))
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(EMAIL_SENDER, EMAIL_APP_PASSWORD)
-        server.send_message(msg)
+    with imaplib.IMAP4_SSL("imap.gmail.com", 993) as imap:
+        imap.login(EMAIL_SENDER, EMAIL_APP_PASSWORD)
+        imap.append(
+            "[Gmail]/Drafts",
+            "",
+            imaplib.Time2Internaldate(datetime.now(tz=timezone.utc)),
+            msg.as_bytes(),
+        )
 
-    print(f"\nReport email sent to {EMAIL_RECIPIENT}")
+    print(f"\nReport email saved as draft in {EMAIL_SENDER}")
 
 
 # -------------------------------------------------------
@@ -797,9 +824,9 @@ def main():
             title, author, date_str, metrics, means, star_comments, post_url_input
         )
         try:
-            send_report_email(title, html)
+            save_report_as_draft(title, html)
         except Exception as e:
-            print(f"\nWarning: Could not send email: {e}")
+            print(f"\nWarning: Could not save email draft: {e}")
     else:
         print("\nNote: Email not configured. Set EMAIL_SENDER, EMAIL_APP_PASSWORD, EMAIL_RECIPIENT in .env")
 
