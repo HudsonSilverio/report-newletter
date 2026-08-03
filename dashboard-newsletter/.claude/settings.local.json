@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(poetry run:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(poetry env:*)",
+      "Bash(\"C:\\\\Users\\\\Administrador\\\\AppData\\\\Local\\\\pypoetry\\\\Cache\\\\virtualenvs\\\\dashboard-newsletter-tOKunMI--py3.13\\\\Scripts\\\\python.exe\":*)"
     ]
   }
 }

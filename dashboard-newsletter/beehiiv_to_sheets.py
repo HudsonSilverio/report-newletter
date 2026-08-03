@@ -105,9 +105,13 @@ def beehiiv_get(endpoint, params=None):
 def find_post_by_title(title_query):
     """
     Search for a post whose subject_line or title contains the query string.
-    Returns the first matching post dict (with stats), or None.
+    When multiple posts match, returns the one with the highest send_attempts
+    to avoid picking test campaigns or duplicates.
     """
     page = 1
+    candidates = []
+    query_lower = title_query.lower()
+
     while True:
         data = beehiiv_get(
             f"/publications/{PUBLICATION_ID}/posts",
@@ -122,12 +126,11 @@ def find_post_by_title(title_query):
         if not posts:
             break
 
-        query_lower = title_query.lower()
         for post in posts:
             subject = (post.get("subject_line") or "").lower()
             title = (post.get("title") or "").lower()
             if query_lower in subject or query_lower in title:
-                return post
+                candidates.append(post)
 
         # Check pagination
         total_pages = data.get("total_pages", 1)
@@ -135,7 +138,23 @@ def find_post_by_title(title_query):
             break
         page += 1
 
-    return None
+    if not candidates:
+        return None
+
+    # Pick the post with the most recipients (real campaign, not test)
+    best = max(
+        candidates,
+        key=lambda p: (p.get("stats") or {}).get("email", {}).get("recipients", 0),
+    )
+
+    if len(candidates) > 1:
+        print(f"\n  {len(candidates)} posts matched. Selected the one with most recipients:")
+        for c in candidates:
+            recip = (c.get("stats") or {}).get("email", {}).get("recipients", 0)
+            marker = " <-- selected" if c is best else ""
+            print(f"    {recip:>8} recipients - {c.get('title', '')}{marker}")
+
+    return best
 
 
 def extract_star_clicks(post):
@@ -527,7 +546,7 @@ def fetch_post_title(url):
     return None
 
 
-def build_report_html(title, author, date_str, metrics, means, star_comments, post_url):
+def build_report_html(title, author, date_str, metrics, means, star_comments, post_url, observations=""):
     """Build the HTML email body matching the newsletter report template."""
 
     # Compute differences
@@ -653,6 +672,12 @@ def build_report_html(title, author, date_str, metrics, means, star_comments, po
     </div>
   </div>
 
+  {"" if not observations else f'''<!-- Observations -->
+  <div style="background:#fff8e1;border-left:4px solid #ffc107;padding:12px 16px;margin:24px 0;border-radius:4px;">
+    <p style="margin:0 0 4px;font-size:15px;"><strong>Observations:</strong></p>
+    <p style="margin:0;font-size:14px;">{html_module.escape(observations)}</p>
+  </div>'''}
+
   <!-- Comments Section -->
   <p style="font-size:15px;"><strong>Below are the qualitative feedback we've received for this one:</strong></p>
   {comments_html}
@@ -718,9 +743,10 @@ def main():
         print("No title provided. Exiting.")
         sys.exit(1)
 
-    # Ask for author and post link (user input)
+    # Ask for author, post link, and observations (user input)
     author = input("Author(s): ").strip()
     post_url_input = input("Post link: ").strip()
+    observations = input("Observations (press Enter to skip): ").strip()
 
     # Get date range for Wix comments
     has_wix = bool(WIX_IST_TOKEN and WIX_SITE_ID)
@@ -821,7 +847,7 @@ def main():
         metrics = compute_newsletter_metrics(open_rate, stars)
         means = read_means_from_sheet(spreadsheet.sheet1)
         html = build_report_html(
-            title, author, date_str, metrics, means, star_comments, post_url_input
+            title, author, date_str, metrics, means, star_comments, post_url_input, observations
         )
         try:
             save_report_as_draft(title, html)
