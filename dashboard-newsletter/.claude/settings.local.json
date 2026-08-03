@@ -3,8 +3,30 @@
     "allow": [
       "Bash(poetry run:*)",
       "Bash(python:*)",
-      "Bash(poetry env:*)",
-      "Bash(\"C:\\\\Users\\\\Administrador\\\\AppData\\\\Local\\\\pypoetry\\\\Cache\\\\virtualenvs\\\\dashboard-newsletter-tOKunMI--py3.13\\\\Scripts\\\\python.exe\":*)"
+      "Bash(poetry --version)",
+      "Bash(poetry env *)",
+      "Bash(poetry install *)",
+      "Bash(grep -q \"localhost:8501\\\\|Local URL\\\\|Error\\\\|Traceback\" \"C:\\\\Users\\\\hudpi\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-hudpi-projetos-report-newletter-dashboard-newsletter\\\\1b82619f-d0f5-4ecd-901a-3a7374fdd4cb\\\\tasks\\\\bh5pu4fbx.output\")",
+      "Bash(break)",
+      "Bash(sleep 2)",
+      "Bash(echo \"=== OUTPUT ===\")",
+      "Bash(cat \"C:\\\\Users\\\\hudpi\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-hudpi-projetos-report-newletter-dashboard-newsletter\\\\1b82619f-d0f5-4ecd-901a-3a7374fdd4cb\\\\tasks\\\\bh5pu4fbx.output\")",
+      "Bash(PYTHONIOENCODING=utf-8 poetry run streamlit run app.py --server.port 8501 --server.headless true)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8501/_stcore/health)",
+      "Bash(curl -s http://localhost:8501/_stcore/health)",
+      "PowerShell(Start-Process \"http://localhost:8501\")",
+      "Bash(PYTHONIOENCODING=utf-8 poetry run python -c \"import beehiiv_to_sheets\")",
+      "Bash(PYTHONIOENCODING=utf-8 poetry run python beehiiv_to_sheets.py \"test\")",
+      "Bash(cp \"C:/Users/hudpi/projetos/email-tracker/credentials.json\" \"C:/Users/hudpi/projetos/report-newletter/dashboard-newsletter/credentials.json\")",
+      "Bash(git check-ignore *)",
+      "Bash(PYTHONIOENCODING=utf-8 poetry run python \"C:/Users/hudpi/AppData/Local/Temp/claude/C--Users-hudpi-projetos-report-newletter-dashboard-newsletter/88777e3f-0da3-47fc-9e1b-55e6ab364de7/scratchpad/test_access.py\")",
+      "Bash(PYTHONIOENCODING=utf-8 poetry run python beehiiv_to_sheets.py \"xyz-nao-existe\")",
+      "PowerShell(git fetch *)",
+      "PowerShell(git push *)",
+      "PowerShell(git stash *)",
+      "PowerShell(git pull *)",
+      "PowerShell(git *)",
+      "PowerShell(Out-Null *)"
     ]
   }
 }
