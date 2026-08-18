@@ -2,26 +2,51 @@
 
 Automated reporting tool for the **Clearer Thinking Newsletter** by **Spark Wave**.
 
-This project does two things:
+**Live dashboard:** [report-newletter.streamlit.app](https://report-newletter.streamlit.app/)
 
-1. **Dashboard** — A Streamlit web app that displays interactive charts with historical newsletter metrics (open rates, ratings, comments).
-2. **Data Pipeline** — A script that pulls data from Beehiiv + Wix, inserts it into Google Sheets, and sends a formatted report email to the team.
+---
 
-**Live dashboard:** [https://report-newletter.streamlit.app/](https://report-newletter.streamlit.app/)
+## What does this project do?
+
+Every week a newsletter goes out to thousands of readers. And every week the same question comes up: **how did this edition perform?**
+
+This project automates the answer.
+
+It starts when the operator opens a terminal and types the newsletter title. The script `beehiiv_to_sheets.py` goes to work. First, it hits the **Beehiiv API** and pulls the numbers: open rate and how many people clicked each star rating. Then it reaches the **Wix API** and collects the **comments** readers left on the feedback forms.
+
+With everything in hand, it connects to **Google Sheets**, inserts a new row with the metrics, writes the formulas automatically, and distributes comments across the star-rating tabs. It then builds a **formatted HTML email** comparing the results against the historical average and saves it as a **draft in Gmail**, ready for review and sending.
+
+On the other side there's the **dashboard**. Built with Streamlit and Plotly, it reads the same spreadsheet, cleans the data, and displays five interactive charts — open rate, average rating, positive ratings, negative ratings, and total ratings — each with an average line for comparison. Date and author filters let you explore the full history.
+
+What used to be manual copy-and-paste is now **a single terminal command** that feeds the spreadsheet, generates the report, and updates the dashboard all at once.
+
+---
+
+## Project structure
+
+```
+dashboard-newsletter/
+├── beehiiv_to_sheets.py    # Data pipeline (Beehiiv + Wix → Sheets + Email)
+├── app.py                  # Visual dashboard (Streamlit + Plotly)
+├── data_loader.py          # Reads and cleans data from the spreadsheet
+├── main.py                 # Quick test / debug script
+├── pyproject.toml          # Dependencies (managed with Poetry)
+├── .env                    # API keys and secrets (NOT in Git)
+├── credentials.json        # Google service account (NOT in Git)
+└── tests/                  # Automated tests
+```
 
 ---
 
 ## Prerequisites
 
-Before starting, make sure you have these installed on your machine:
+Make sure you have these installed on your machine:
 
-| Tool | What it is | How to install |
-|------|-----------|----------------|
-| **Python 3.13** | The programming language | [python.org/downloads](https://www.python.org/downloads/) |
-| **Poetry** | Manages project dependencies | [python-poetry.org/docs/#installation](https://python-poetry.org/docs/#installation) |
-| **Git** | Version control | [git-scm.com/downloads](https://git-scm.com/downloads) |
+- **Python 3.13** — [python.org/downloads](https://www.python.org/downloads/)
+- **Poetry** — [python-poetry.org/docs/#installation](https://python-poetry.org/docs/#installation)
+- **Git** — [git-scm.com/downloads](https://git-scm.com/downloads)
 
-To check if they are installed, open a terminal and run:
+To verify everything is installed:
 
 ```bash
 python --version    # should show 3.13.x
@@ -31,23 +56,22 @@ git --version       # should show 2.x.x
 
 ---
 
-## Setup (Step by Step)
+## Setup (step by step)
 
 ### 1. Clone the repository
 
 ```bash
 git clone https://github.com/HudsonSilverio/report-newletter.git
-cd report-newletter
+cd report-newletter/dashboard-newsletter
 ```
 
 ### 2. Install dependencies
 
 ```bash
-cd dashboard-newsletter
 poetry install
 ```
 
-This will create a virtual environment and install all required packages automatically.
+This creates a virtual environment and installs all required packages automatically.
 
 ### 3. Get the credentials file
 
@@ -55,7 +79,7 @@ You need a `credentials.json` file for Google Sheets access. Ask the project adm
 
 ### 4. Create your `.env` file
 
-Inside the `dashboard-newsletter/` folder, create a file named `.env` with the following content. Replace the placeholder values with your own keys:
+Inside the `dashboard-newsletter/` folder, create a file named `.env` with the following content. Replace the placeholder values with your actual keys:
 
 ```env
 # Beehiiv API
@@ -70,123 +94,52 @@ GOOGLE_SHEET_ID=your_google_sheet_id_here
 WIX_IST_TOKEN=your_wix_token_here
 WIX_SITE_ID=your_wix_site_id_here
 
-# Email (for automated report sending)
+# Email (for the automated report)
 EMAIL_SENDER=your_email@gmail.com
 EMAIL_APP_PASSWORD=your_gmail_app_password
-EMAIL_RECIPIENT=your_email@gmail.com
+EMAIL_RECIPIENT=recipient_email@gmail.com
 
 # Links included in the report email
 DASHBOARD_URL=https://report-newletter.streamlit.app/
 SPREADSHEET_URL=https://docs.google.com/spreadsheets/d/your_sheet_id_here
 ```
 
-> **Important:** Never commit the `.env` file or `credentials.json` to Git. They contain sensitive keys.
+> **Important:** Never commit `.env` or `credentials.json` to Git. They contain sensitive keys.
 
 ---
 
-## Configuration You Must Change
+## How to run
 
-If you are **not** the original developer, you **must** update these settings before running:
-
-### Email
-
-The email is currently configured to send reports to the developer's personal address. To receive reports at your own email:
-
-1. Open `dashboard-newsletter/.env`
-2. Change `EMAIL_SENDER` and `EMAIL_RECIPIENT` to your Gmail address
-3. Generate a **Gmail App Password** for your account (see instructions below)
-4. Update `EMAIL_APP_PASSWORD` with your new app password
-
-**How to generate a Gmail App Password:**
-
-1. Go to [myaccount.google.com/security](https://myaccount.google.com/security)
-2. Enable **2-Step Verification** if you haven't already
-3. Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
-4. Enter a name (e.g. `newsletter-report`) and click **Create**
-5. Copy the 16-character password and paste it into your `.env` file
-
-### Timezone
-
-The Wix comment date range is currently set to **Brazil time** (`America/Sao_Paulo`).
-
-If you are in a different timezone, open `dashboard-newsletter/beehiiv_to_sheets.py` and change this line:
-
-```python
-INPUT_TZ = ZoneInfo("America/Sao_Paulo")
-```
-
-Replace `"America/Sao_Paulo"` with your timezone. Examples:
-
-| Region | Timezone string |
-|--------|----------------|
-| US Eastern | `America/New_York` |
-| US Pacific | `America/Los_Angeles` |
-| UK | `Europe/London` |
-| Central Europe | `Europe/Berlin` |
-| Brazil | `America/Sao_Paulo` |
-
-> **Tip:** Your timezone should match the one configured in your Beehiiv/Wix dashboard so that date ranges align correctly.
-
-### API Keys
-
-If you are working with a different Beehiiv publication or Wix site, update the corresponding keys in your `.env` file.
-
----
-
-## How to Run
-
-### Running the Dashboard (view charts)
+### View the Dashboard
 
 ```bash
-cd dashboard-newsletter
 poetry run streamlit run app.py
 ```
 
-This opens the dashboard in your browser at `http://localhost:8501`.
+Opens in your browser at `http://localhost:8501`. No extra configuration needed — it reads the public spreadsheet automatically.
 
-### Running the Data Pipeline (insert data + send email)
+### Run the Data Pipeline (insert data + generate report)
 
-Before running the script, you need to gather some information from Beehiiv and Wix. Follow the steps below.
+#### Before running, gather this information:
 
-#### Step 1 — Get the post info from Beehiiv
+1. **Newsletter title** — Go to [app.beehiiv.com](https://app.beehiiv.com/), navigate to Posts, and copy the title (or part of it)
+2. **Author(s)** — the name(s) listed as author on Beehiiv
+3. **Post link** — the blog post URL on [clearerthinking.org](https://www.clearerthinking.org/) that corresponds to the newsletter
+4. **Wix comments date range** — On [wix.com](https://www.wix.com/), go to Forms & Submissions and note the time window when comments were submitted (e.g. `Jun 25th, 2026 8:00 PM` to `Jul 2nd, 2026 8:00 PM`)
 
-1. Go to [app.beehiiv.com](https://app.beehiiv.com/) and log in
-2. Navigate to **Posts** in the sidebar
-3. Find the newsletter you want to report on and click on it
-4. From the post page, copy:
-   - **Title** — the subject line of the newsletter (you only need part of it; the script will search for a match)
-   - **Author(s)** — the name(s) listed as author
-
-#### Step 2 — Get the post link from the website
-
-1. Go to [clearerthinking.org](https://www.clearerthinking.org/)
-2. Find the blog post that corresponds to the newsletter
-3. Open the post and copy the full URL from your browser's address bar (e.g., `https://www.clearerthinking.org/post/ai-and-decision-making`)
-
-> **Note:** This URL is the blog post link, not the Beehiiv email link. The script will automatically fetch the page title from this URL to use in the report email.
-
-#### Step 3 — Get the date range for Wix comments
-
-1. Go to [wix.com](https://www.wix.com/) and log in to the site dashboard
-2. Navigate to **Forms & Submissions**
-3. Check when the first and last comments were submitted for this newsletter
-4. Note down the date range (in Brasilia time) — for example, `Jun 25th, 2026 8:00 PM` to `Jul 2nd, 2026 8:00 PM`
-
-> **Tip:** Use a range that covers the full period the newsletter was live. This is typically from the day it was sent until the next newsletter goes out.
-
-#### Step 4 — Run the script
+#### Run the script:
 
 ```bash
-cd dashboard-newsletter
 poetry run python beehiiv_to_sheets.py
 ```
 
-The script will prompt you for the information you gathered:
+The script will prompt you for each piece of information:
 
 ```
 Enter the newsletter title (or part of it): AI and Decision Making
 Author(s): Spencer Greenberg
 Post link: https://www.clearerthinking.org/post/ai-and-decision-making
+Observations (press Enter to skip):
 
 Wix comments date range (Brasilia time).
 From: Jun 25th, 2026 8:00 PM
@@ -195,86 +148,57 @@ To: Jul 2nd, 2026 8:00 PM
 Found post:
   Title:    AI and Decision Making
   Author:   Spencer Greenberg
-  ...
+  Opens %:  0.452
+  5*: 120  4*: 85  3*: 30  2*: 10  1*: 5
 
 Insert this data into Google Sheets? (y/n): y
 ```
 
-After confirming, it will:
-- Insert the data into Google Sheets
-- Insert Wix comments into the comment tabs
-- Save a report email draft with the post link title automatically fetched from the linked page (e.g., the actual blog post title, not the newsletter subject line)
-
-You can also pass the title directly:
+You can also pass the title directly from the command line:
 
 ```bash
 poetry run python beehiiv_to_sheets.py "AI and Decision Making"
 ```
 
----
-
-## Running with Claude Code (Alternative)
-
-If you have [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed, you can use it to run and interact with the project:
-
-### 1. Install Claude Code
-
-```bash
-npm install -g @anthropic-ai/claude-code
-```
-
-### 2. Open the project
-
-```bash
-cd report-newletter
-claude
-```
-
-### 3. Ask Claude to run the project
-
-Inside the Claude Code session, you can simply type:
-
-```
-Run the data pipeline for the newsletter "AI and Decision Making"
-```
-
-Or:
-
-```
-Start the Streamlit dashboard
-```
-
-Claude Code will handle the commands for you and can help troubleshoot any errors.
+After confirming, the script will:
+- Insert the data into Google Sheets
+- Insert Wix comments into the star-rating tabs
+- Save a formatted report email as a draft in Gmail
 
 ---
 
-## Project Structure
+## Settings you may need to change
 
+### Email
+
+To receive reports at your own email:
+
+1. Open `.env` and update `EMAIL_SENDER`, `EMAIL_APP_PASSWORD`, and `EMAIL_RECIPIENT`
+2. To generate a Gmail App Password:
+   - Go to [myaccount.google.com/security](https://myaccount.google.com/security)
+   - Enable **2-Step Verification**
+   - Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+   - Create a new app password and paste it into your `.env`
+
+### Timezone
+
+The script uses Brazil time (`America/Sao_Paulo`) for Wix comment dates. If you need to change it, edit this line in `beehiiv_to_sheets.py`:
+
+```python
+INPUT_TZ = ZoneInfo("America/Sao_Paulo")
 ```
-report-newletter/
-├── dashboard-newsletter/
-│   ├── app.py                  # Streamlit dashboard (main UI)
-│   ├── data_loader.py          # Loads data from Google Sheets
-│   ├── beehiiv_to_sheets.py    # Data pipeline + email report
-│   ├── main.py                 # Quick data loading test
-│   ├── pyproject.toml          # Project dependencies
-│   ├── .env                    # API keys and config (not in Git)
-│   └── credentials.json        # Google service account (not in Git)
-└── README.md
-```
+
+Examples: `America/New_York`, `America/Los_Angeles`, `Europe/London`, `Europe/Berlin`.
 
 ---
 
-## Troubleshooting
+## Common issues
 
-| Problem | Solution |
-|---------|----------|
-| `ModuleNotFoundError` | Run `poetry install` to install dependencies |
-| `FileNotFoundError: credentials.json` | Make sure `credentials.json` is in the `dashboard-newsletter/` folder |
-| Email not sending | Check your `EMAIL_APP_PASSWORD` is correct and 2-Step Verification is enabled |
-| Wrong date range for comments | Check the `INPUT_TZ` timezone setting matches your region |
-| `UnicodeEncodeError` on Windows | Set the environment variable `PYTHONIOENCODING=utf-8` before running |
-| Post link title not matching the blog post | The title is fetched from the linked page's `<title>` tag; if the page is unreachable, the newsletter subject is used as fallback |
+- **`ModuleNotFoundError`** — Run `poetry install` to install dependencies
+- **`FileNotFoundError: credentials.json`** — Make sure `credentials.json` is inside `dashboard-newsletter/`
+- **Email draft not saving** — Check that `EMAIL_APP_PASSWORD` is correct and 2-Step Verification is enabled
+- **Wrong dates for comments** — Confirm the timezone in `INPUT_TZ` matches your region
+- **`UnicodeEncodeError` on Windows** — Set the environment variable `PYTHONIOENCODING=utf-8` before running
 
 ---
 
