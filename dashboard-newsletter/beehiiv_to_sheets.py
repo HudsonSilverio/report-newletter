@@ -1,25 +1,26 @@
 """
-Beehiiv + Wix -> Google Sheets integration script.
+Beehiiv + GuidedTrack -> Google Sheets integration script.
 
-Fetches newsletter data from the Beehiiv API, inserts a new row
-into the Google Sheets spreadsheet used by the Streamlit dashboard,
-and fetches Wix form comments (star ratings) into the Comments tabs.
+Fetches the open rate from the Beehiiv API, downloads ratings and feedback
+from GuidedTrack, inserts a new row into the Google Sheets spreadsheet
+used by the Streamlit dashboard, and saves an email report as a Gmail draft.
 
 Usage:
     python beehiiv_to_sheets.py "Newsletter Title Here"
     python beehiiv_to_sheets.py   # will prompt for the title
 """
 
+import csv
 import html as html_module
 import imaplib
+import io
 import os
 import re
-import smtplib
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from zoneinfo import ZoneInfo
+from urllib.parse import urlparse
 
 import gspread
 import requests
@@ -43,19 +44,20 @@ GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 
 BEEHIIV_BASE_URL = "https://api.beehiiv.com/v2"
 
-# Wix configuration
-WIX_IST_TOKEN = os.getenv("WIX_IST_TOKEN", "")
-WIX_SITE_ID = os.getenv("WIX_SITE_ID", "")
+# GuidedTrack configuration
+GT_EMAIL = os.getenv("GT_EMAIL", "")
+GT_PASSWORD = os.getenv("GT_PASSWORD", "")
+GT_PROGRAM_ID = os.getenv("GT_PROGRAM_ID", "38551")
+GT_CSV_PATH = os.path.join(os.path.expanduser("~"), "guidedtrack", "ct_newsletter_data.csv")
 
-WIX_FORM_IDS = {
-    5: "f3a3156c-70ab-4fa1-b5d4-612af837bc92",
-    4: "b1e62313-8fdd-400f-8f9e-63b290c34b1c",
-    3: "dac92d59-eeee-479d-baaf-4ba5e1c8a6e6",
-    2: "182b4778-30f2-4430-832a-651a04d53abf",
-    1: "54b6519e-09f7-42ba-abc9-49d49b4d482e",
+# Rating mapping: GuidedTrack final_rating text -> star number
+RATING_MAP = {
+    "Excellent": 5,
+    "Good": 4,
+    "Okay": 3,
+    "Subpar": 2,
+    "Bad": 1,
 }
-
-WIX_COMMENT_FIELD = "please_write_your_comments_below"
 
 STAR_TAB_NAMES = {
     5: "5\u2605 Comments",
@@ -64,9 +66,6 @@ STAR_TAB_NAMES = {
     2: "2\u2605 Comments",
     1: "1\u2605 Comments",
 }
-
-# Timezone for date input (matches Wix dashboard display)
-INPUT_TZ = ZoneInfo("America/Sao_Paulo")
 
 # Email configuration
 EMAIL_SENDER = os.getenv("EMAIL_SENDER", "")
@@ -78,16 +77,117 @@ SPREADSHEET_URL = os.getenv(
     f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}",
 )
 
-# Star-rating URL patterns (case-insensitive substring match)
-# Matched against base_url or url of each click entry.
-# Order matters: 5-stars is checked before 1-star to avoid false matches.
-STAR_PATTERNS = {
-    5: ["newsletter-rating-5-star"],
-    4: ["newsletter-rating-4-star"],
-    3: ["newsletter-rating-3-star"],
-    2: ["newsletter-rating-2-star"],
-    1: ["newsletter-rating-1-star"],
-}
+
+# -------------------------------------------------------
+# GuidedTrack CSV
+# -------------------------------------------------------
+def download_guidedtrack_csv():
+    """
+    Download the data CSV from GuidedTrack for the configured program.
+    Returns the local file path.
+    """
+    url = f"https://www.guidedtrack.com/programs/{GT_PROGRAM_ID}/exports?export_format=csv"
+    resp = requests.get(url, auth=(GT_EMAIL, GT_PASSWORD), timeout=60)
+    resp.raise_for_status()
+
+    # Verify we got CSV, not an HTML login page
+    if resp.text.strip().startswith("<!DOCTYPE") or resp.text.strip().startswith("<html"):
+        raise RuntimeError("GuidedTrack returned HTML instead of CSV. Check GT_EMAIL/GT_PASSWORD in .env")
+
+    os.makedirs(os.path.dirname(GT_CSV_PATH), exist_ok=True)
+    with open(GT_CSV_PATH, "w", encoding="utf-8", newline="") as f:
+        f.write(resp.text)
+
+    return GT_CSV_PATH
+
+
+def _title_to_slug(title):
+    """Convert a newsletter title to a URL-style slug for matching."""
+    slug = title.lower().strip()
+    # Replace apostrophes with nothing (don't -> dont, like URL slugs)
+    slug = re.sub(r"['']", "", slug)
+    # Remove all non-word chars except spaces and hyphens
+    slug = re.sub(r"[^\w\s-]", "", slug)
+    # Collapse whitespace to single hyphens
+    slug = re.sub(r"\s+", "-", slug)
+    return slug
+
+
+def parse_guidedtrack_csv(csv_path, newsletter_title):
+    """
+    Read the GuidedTrack CSV and filter rows matching the newsletter title.
+    Matches by converting the title to a slug and checking if it appears
+    in the article URL path.
+
+    Returns a list of dicts (one per matching row).
+    """
+    slug = _title_to_slug(newsletter_title)
+
+    matching_rows = []
+    with open(csv_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            article_url = row.get("article", "")
+            if not article_url:
+                continue
+            # Extract the path portion of the URL and check for slug match
+            try:
+                path = urlparse(article_url).path.lower()
+            except Exception:
+                path = article_url.lower()
+            if slug in path:
+                matching_rows.append(row)
+
+    return matching_rows
+
+
+def extract_ratings_from_csv(rows):
+    """
+    Count final_rating values from filtered CSV rows.
+    Returns dict {5: count, 4: count, 3: count, 2: count, 1: count}.
+    """
+    stars = {5: 0, 4: 0, 3: 0, 2: 0, 1: 0}
+    for row in rows:
+        rating_text = (row.get("final_rating") or "").strip()
+        star = RATING_MAP.get(rating_text)
+        if star is not None:
+            stars[star] += 1
+    return stars
+
+
+def extract_comments_from_csv(rows):
+    """
+    Extract non-empty feedback grouped by star rating.
+    Returns dict {5: [comments], 4: [comments], ...}.
+    """
+    comments = {5: [], 4: [], 3: [], 2: [], 1: []}
+    for row in rows:
+        rating_text = (row.get("final_rating") or "").strip()
+        star = RATING_MAP.get(rating_text)
+        if star is None:
+            continue
+
+        # Check both feedback columns
+        feedback = (row.get("feedback") or "").strip()
+        if not feedback:
+            feedback = (row.get("(Optional) What feedback would you like to give about this article? (7f2fv5r)") or "").strip()
+
+        if feedback:
+            # Clean up: replace line breaks with space
+            feedback = feedback.replace("\r\n", " ").replace("\n", " ")
+            comments[star].append(feedback)
+
+    return comments
+
+
+def cleanup_guidedtrack_csv(csv_path):
+    """Delete the downloaded GuidedTrack CSV file."""
+    try:
+        if os.path.exists(csv_path):
+            os.remove(csv_path)
+            print(f"\nCleaned up: {csv_path}")
+    except OSError as e:
+        print(f"\nWarning: Could not delete CSV: {e}")
 
 
 # -------------------------------------------------------
@@ -105,7 +205,7 @@ def beehiiv_get(endpoint, params=None):
 def find_post_by_title(title_query):
     """
     Search for a post whose subject_line or title contains the query string.
-    When multiple posts match, returns the one with the highest send_attempts
+    When multiple posts match, returns the one with the highest recipients
     to avoid picking test campaigns or duplicates.
     """
     page = 1
@@ -132,7 +232,6 @@ def find_post_by_title(title_query):
             if query_lower in subject or query_lower in title:
                 candidates.append(post)
 
-        # Check pagination
         total_pages = data.get("total_pages", 1)
         if page >= total_pages:
             break
@@ -141,7 +240,6 @@ def find_post_by_title(title_query):
     if not candidates:
         return None
 
-    # Pick the post with the most recipients (real campaign, not test)
     best = max(
         candidates,
         key=lambda p: (p.get("stats") or {}).get("email", {}).get("recipients", 0),
@@ -157,64 +255,11 @@ def find_post_by_title(title_query):
     return best
 
 
-def extract_star_clicks(post):
-    """
-    Extract unique click counts for each star rating (5 to 1)
-    by matching URLs against known patterns.
-
-    Returns dict {5: count, 4: count, 3: count, 2: count, 1: count}
-    """
-    stars = {5: 0, 4: 0, 3: 0, 2: 0, 1: 0}
-    stats = post.get("stats")
-    if not stats:
-        return stars
-
-    clicks = stats.get("clicks", [])
-    if not clicks:
-        return stars
-
-    matched_urls = []
-    for click_entry in clicks:
-        # Prefer base_url (clean, no UTM params), fall back to url
-        url = (click_entry.get("base_url") or click_entry.get("url") or "").lower()
-        email_stats = click_entry.get("email", {})
-        unique_clicks = email_stats.get("unique_clicks", 0) if email_stats else 0
-
-        for star_rating, patterns in STAR_PATTERNS.items():
-            if any(pattern in url for pattern in patterns):
-                stars[star_rating] = unique_clicks
-                matched_urls.append((star_rating, url, unique_clicks))
-                break
-
-    if matched_urls:
-        print("\nMatched star-rating URLs:")
-        for rating, url, clicks_count in sorted(matched_urls, reverse=True):
-            print(f"  {rating}*: {clicks_count} unique clicks - {url[:80]}")
-    else:
-        print("\nNo star-rating URLs matched. Click URLs found:")
-        for click_entry in clicks:
-            url = click_entry.get("url", "")
-            email_stats = click_entry.get("email", {})
-            uc = email_stats.get("unique_clicks", 0) if email_stats else 0
-            print(f"  {uc:>4} clicks - {url[:100]}")
-        print(
-            "\nTip: Update STAR_PATTERNS in beehiiv_to_sheets.py to match your rating URLs."
-        )
-
-    return stars
-
-
 def extract_open_rate(post):
     """Extract open rate percentage from post stats."""
     stats = post.get("stats", {})
     email = stats.get("email", {})
     return email.get("open_rate", 0)
-
-
-def extract_authors(post):
-    """Extract authors as comma-separated string."""
-    authors = post.get("authors", [])
-    return ", ".join(authors) if authors else ""
 
 
 def extract_date(post):
@@ -226,127 +271,43 @@ def extract_date(post):
     return ""
 
 
-# -------------------------------------------------------
-# Wix Form Submissions
-# -------------------------------------------------------
-def _parse_single_date(s):
+def extract_audience(post):
     """
-    Parse a single date string like 'Jun 25th, 2026 8:00 PM' to UTC ISO-8601.
-    Input is assumed Eastern Time (EST/EDT handled automatically).
+    Check the post's send_targets to determine the audience.
+    If sent to 'CT Audience - Engaged Subs' segment or to the whole publication,
+    returns 'All Subscribers'. Otherwise prints a warning and returns the segment name.
     """
-    # Remove ordinal suffixes: 1st, 2nd, 3rd, 4th-31th
-    s = re.sub(r'(\d+)(st|nd|rd|th)', r'\1', s)
-    for fmt in ("%b %d, %Y %I:%M %p", "%b %d, %Y %I %p", "%b %d, %Y"):
-        try:
-            dt = datetime.strptime(s.strip(), fmt)
-            dt_eastern = dt.replace(tzinfo=INPUT_TZ)
-            dt_utc = dt_eastern.astimezone(timezone.utc)
-            return dt_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        except ValueError:
-            continue
-    raise ValueError(f"Could not parse date: '{s}'")
+    send_targets = post.get("send_targets", [])
 
+    for target in send_targets:
+        receiver_type = target.get("receiver_type", "")
 
-def parse_date_range_split(from_str, to_str):
-    """
-    Parse two separate date strings (From / To).
-    Returns (from_utc, to_utc) as ISO-8601 strings in UTC.
-    """
-    return _parse_single_date(from_str), _parse_single_date(to_str)
+        if receiver_type == "Publication":
+            return "All Subscribers"
 
+        if receiver_type == "Segment":
+            segment_id = target.get("receiver_id", "")
+            # Look up the segment name
+            try:
+                segments_data = beehiiv_get(f"/publications/{PUBLICATION_ID}/segments")
+                segments = segments_data.get("data", [])
+                for seg in segments:
+                    if seg.get("id") == segment_id:
+                        seg_name = seg.get("name", "")
+                        if "engaged subs" in seg_name.lower() or "ct audience" in seg_name.lower():
+                            return "All Subscribers"
+                        print(f"\n  WARNING: Newsletter sent to segment '{seg_name}', not 'CT Audience - Engaged Subs'.")
+                        return seg_name
+            except Exception as e:
+                print(f"\n  WARNING: Could not verify audience segment: {e}")
+                return "Unknown"
 
-def fetch_wix_comments(form_id, date_from_utc, date_to_utc):
-    """
-    Fetch all non-empty comments from a Wix form within a date range.
-    Uses cursor-based pagination. Returns list of comment strings.
-    """
-    headers = {
-        "Authorization": WIX_IST_TOKEN,
-        "wix-site-id": WIX_SITE_ID,
-        "Content-Type": "application/json",
-    }
+    # Fallback: if audience field is "free" (whole publication)
+    if post.get("audience") == "free":
+        return "All Subscribers"
 
-    comments = []
-    cursor = None
-
-    while True:
-        paging = {"limit": 100}
-        if cursor:
-            paging["cursor"] = cursor
-
-        query_filter = {
-            "$and": [
-                {"namespace": "wix.form_app.form"},
-                {"formId": form_id},
-                {"createdDate": {"$gte": date_from_utc}},
-                {"createdDate": {"$lte": date_to_utc}},
-            ]
-        }
-
-        body = {
-            "query": {
-                "filter": query_filter,
-                "sort": [{"fieldName": "createdDate", "order": "DESC"}],
-                "cursorPaging": paging,
-            },
-            "onlyYourOwn": False,
-        }
-
-        resp = requests.post(
-            "https://www.wixapis.com/form-submission-service/v4/submissions/namespace/query",
-            headers=headers,
-            json=body,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        for sub in data.get("submissions", []):
-            fields = sub.get("submissions", {})
-            comment = (fields.get(WIX_COMMENT_FIELD) or "").strip()
-            if comment:
-                # Replace line breaks with space to keep full text in one cell
-                comment = comment.replace("\r\n", " ").replace("\n", " ")
-                comments.append(comment)
-
-        # Check pagination
-        metadata = data.get("pagingMetadata", data.get("metadata", {}))
-        if metadata.get("hasNext"):
-            cursors = metadata.get("cursors", {})
-            cursor = cursors.get("next")
-            if not cursor:
-                break
-        else:
-            break
-
-    return comments
-
-
-def insert_comments_to_sheets(spreadsheet, title, star_comments):
-    """
-    Insert comments into each star Comments tab.
-    For each star rating, inserts a new column B with:
-      B1 = newsletter title
-      B2 = count of comments
-      B3+ = individual comments
-    """
-    for star_rating in [5, 4, 3, 2, 1]:
-        tab_name = STAR_TAB_NAMES[star_rating]
-        comments = star_comments.get(star_rating, [])
-
-        try:
-            ws = spreadsheet.worksheet(tab_name)
-        except gspread.exceptions.WorksheetNotFound:
-            print(f"  Tab '{tab_name}' not found, skipping.")
-            continue
-
-        # Build column data: [title, count, comment1, comment2, ...]
-        col_data = [title, str(len(comments))] + comments
-
-        # Insert as column B (index 2), pushing existing columns right
-        ws.insert_cols([col_data], col=2)
-
-        print(f"  {star_rating}* Comments: {len(comments)} comments inserted into '{tab_name}'")
+    print(f"\n  WARNING: Could not determine audience. send_targets: {send_targets}")
+    return "Unknown"
 
 
 # -------------------------------------------------------
@@ -362,7 +323,7 @@ def get_sheets_client():
     return gspread.authorize(creds)
 
 
-def insert_row_to_sheet(title, author, date_str, open_rate, stars):
+def insert_row_to_sheet(title, author, date_str, audience, open_rate, stars):
     """
     Insert a new data row at position 3 (below header) in the Google Sheet.
     Also inserts formulas and updates the Means row AVERAGE ranges.
@@ -370,15 +331,11 @@ def insert_row_to_sheet(title, author, date_str, open_rate, stars):
     client = get_sheets_client()
     sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
 
-    # Build the row (columns A through N)
-    # A=Title, B=Author, C=Date, D=Audience(blank), E=Opens%,
-    # F=formula, G=formula, H=formula,
-    # I=5*, J=4*, K=3*, L=2*, M=1*, N=formula
     row = [
         title,                          # A - Title
         author,                         # B - Author(s)
         date_str,                       # C - Date
-        "All Subscribers",              # D - Audience
+        audience,                       # D - Audience
         open_rate,                      # E - Opens %
         "",                             # F - placeholder for formula
         "",                             # G - placeholder for formula
@@ -391,14 +348,8 @@ def insert_row_to_sheet(title, author, date_str, open_rate, stars):
         "",                             # N - placeholder for formula
     ]
 
-    # Insert the new row at position 3 (pushes existing rows down)
     sheet.insert_row(row, index=3)
 
-    # Set formulas in the new row 3
-    # F3: Average rating rounded to 1 decimal (e.g. 3.1)
-    # G3: % positive (4s & 5s) as percentage (e.g. 43%)
-    # H3: % negative (1s) as percentage (e.g. 18%)
-    # N3: Total ratings
     formulas = {
         "F3": "=ROUND(5*(I3/N3)+4*(J3/N3)+3*(K3/N3)+2*(L3/N3)+1*(M3/N3),1)",
         "G3": "=SUM(I3:J3)/N3",
@@ -408,11 +359,9 @@ def insert_row_to_sheet(title, author, date_str, open_rate, stars):
     for cell, formula in formulas.items():
         sheet.update_acell(cell, formula)
 
-    # Format G3 and H3 as percentage (0% format, e.g. 43%, 18%)
     sheet.format("G3", {"numberFormat": {"type": "PERCENT", "pattern": "0%"}})
     sheet.format("H3", {"numberFormat": {"type": "PERCENT", "pattern": "0%"}})
 
-    # Update Means row (row 1) AVERAGE formulas to include the new row
     update_means_formulas(sheet)
 
     print(f"\nRow inserted at position 3 in the spreadsheet.")
@@ -427,10 +376,7 @@ def update_means_formulas(sheet):
       =AVERAGE(E3:E39) becomes =AVERAGE(E4:E40)
     We need to reset the start back to row 3 so the new row is included:
       =AVERAGE(E4:E40) becomes =AVERAGE(E3:E40)
-
-    Scans every cell in row 1 to catch all formula columns.
     """
-    # Read entire row 1 as formulas
     row1 = sheet.get("1:1", value_render_option="FORMULA")
     if not row1 or not row1[0]:
         return
@@ -452,7 +398,6 @@ def update_means_formulas(sheet):
 def _fix_range_start(formula, start_row=3):
     """
     Reset the start row of range references to include the newly inserted row.
-    The end row is left as-is (Google Sheets already adjusted it).
     E.g. 'AVERAGE(E4:E40)' -> 'AVERAGE(E3:E40)'
     """
     def replace_range(match):
@@ -464,13 +409,36 @@ def _fix_range_start(formula, start_row=3):
     return re.sub(r"([A-Z]+)(\d+):([A-Z]+)(\d+)", replace_range, formula)
 
 
+def insert_comments_to_sheets(spreadsheet, title, star_comments):
+    """
+    Insert comments into each star Comments tab.
+    For each star rating, inserts a new column B with:
+      B1 = newsletter title
+      B2 = count of comments
+      B3+ = individual comments
+    """
+    for star_rating in [5, 4, 3, 2, 1]:
+        tab_name = STAR_TAB_NAMES[star_rating]
+        comments = star_comments.get(star_rating, [])
+
+        try:
+            ws = spreadsheet.worksheet(tab_name)
+        except gspread.exceptions.WorksheetNotFound:
+            print(f"  Tab '{star_rating}* Comments' not found, skipping.")
+            continue
+
+        col_data = [title, str(len(comments))] + comments
+        ws.insert_cols([col_data], col=2)
+
+        print(f"  {star_rating}* Comments: {len(comments)} comments inserted")
+
+
 # -------------------------------------------------------
 # Email Report
 # -------------------------------------------------------
 def compute_newsletter_metrics(open_rate, stars):
-    """Compute derived metrics from raw Beehiiv data."""
+    """Compute derived metrics from raw data."""
     total = sum(stars.values())
-    # open_rate from Beehiiv is a decimal (0.452 = 45.2%)
     open_pct = open_rate * 100 if open_rate <= 1 else open_rate
     avg_rating = (
         round(
@@ -538,7 +506,6 @@ def fetch_post_title(url):
         match = re.search(r"<title[^>]*>(.*?)</title>", resp.text, re.IGNORECASE | re.DOTALL)
         if match:
             raw = match.group(1).strip()
-            # Remove common suffixes like " | Site Name" or " - Site Name"
             raw = re.split(r"\s*[|\u2013\u2014]\s*", raw)[0].strip()
             return html_module.unescape(raw)
     except Exception as e:
@@ -546,16 +513,14 @@ def fetch_post_title(url):
     return None
 
 
-def build_report_html(title, author, date_str, metrics, means, star_comments, post_url, observations=""):
+def build_report_html(title, author, date_str, audience, metrics, means, star_comments, post_url, observations=""):
     """Build the HTML email body matching the newsletter report template."""
 
-    # Compute differences
     diff_opens = metrics["open_pct"] - means["avg_open_rate"]
     diff_rating = metrics["avg_rating"] - means["avg_rating"]
     diff_positive = metrics["pct_positive"] - means["avg_pct_positive"]
     diff_negative = metrics["pct_negative"] - means["avg_pct_negative"]
 
-    # Build metrics table rows
     metrics_rows = f"""
     <tr>
       <td style="padding:10px 12px;border-bottom:1px solid #eee;">Opens</td>
@@ -584,12 +549,11 @@ def build_report_html(title, author, date_str, metrics, means, star_comments, po
     <tr>
       <td style="padding:10px 12px;">Total Ratings</td>
       <td style="text-align:center;padding:10px;">{metrics['total_ratings']}</td>
-      <td style="text-align:center;padding:10px;">—</td>
-      <td style="text-align:center;padding:10px;">—</td>
+      <td style="text-align:center;padding:10px;">\u2014</td>
+      <td style="text-align:center;padding:10px;">\u2014</td>
     </tr>
     """
 
-    # Build comments section
     comment_labels = {
         5: "Excellent",
         4: "Good",
@@ -605,12 +569,11 @@ def build_report_html(title, author, date_str, metrics, means, star_comments, po
         if items:
             comments_html += "<ul style=\"margin:4px 0;padding-left:24px;\">\n"
             for c in items:
-                comments_html += f"  <li style=\"margin-bottom:4px;\">{c}</li>\n"
+                comments_html += f"  <li style=\"margin-bottom:4px;\">{html_module.escape(c)}</li>\n"
             comments_html += "</ul>\n"
         else:
             comments_html += '<p style="color:#999;margin:4px 0 0 24px;">( None )</p>\n'
 
-    # Post link — use the title from the linked page, not the newsletter subject
     if post_url:
         page_title = fetch_post_title(post_url) or title
         post_link = f'<a href="{post_url}" style="color:#1a73e8;text-decoration:none;">{page_title}</a>'
@@ -649,7 +612,7 @@ def build_report_html(title, author, date_str, metrics, means, star_comments, po
         &nbsp;&nbsp;|&nbsp;&nbsp;
         <strong>Sent on:</strong> {date_str}
         &nbsp;&nbsp;|&nbsp;&nbsp;
-        <strong>Audience:</strong> All Subscribers
+        <strong>Audience:</strong> {audience}
       </p>
 
       <hr style="border:none;border-top:1px solid #eee;margin:16px 0;">
@@ -725,6 +688,8 @@ def main():
         missing.append("GOOGLE_SHEET_ID")
     if not os.path.exists(GOOGLE_CREDENTIALS_PATH):
         missing.append(f"Google credentials file ({GOOGLE_CREDENTIALS_PATH})")
+    if not GT_EMAIL or not GT_PASSWORD:
+        missing.append("GT_EMAIL / GT_PASSWORD")
 
     if missing:
         print("Missing configuration:")
@@ -737,117 +702,95 @@ def main():
     if len(sys.argv) > 1:
         title_query = " ".join(sys.argv[1:])
     else:
-        title_query = input("Enter the newsletter title (or part of it): ").strip()
+        title_query = input("Newsletter title: ").strip()
 
     if not title_query:
         print("No title provided. Exiting.")
         sys.exit(1)
 
-    # Ask for author, post link, and observations (user input)
+    # User inputs
     author = input("Author(s): ").strip()
     post_url_input = input("Post link: ").strip()
     observations = input("Observations (press Enter to skip): ").strip()
 
-    # Get date range for Wix comments
-    has_wix = bool(WIX_IST_TOKEN and WIX_SITE_ID)
-    date_from_utc = None
-    date_to_utc = None
+    # Step 1: Download GuidedTrack CSV
+    print(f"\nDownloading GuidedTrack data (program {GT_PROGRAM_ID})...")
+    try:
+        csv_path = download_guidedtrack_csv()
+        print(f"  CSV downloaded: {csv_path}")
+    except Exception as e:
+        print(f"Error downloading GuidedTrack CSV: {e}")
+        sys.exit(1)
 
-    if has_wix:
-        print("\nWix comments date range (Brasilia time).")
-        date_from_input = input("From: ").strip()
-        if date_from_input:
-            date_to_input = input("To: ").strip()
-            if date_to_input:
-                try:
-                    date_from_utc, date_to_utc = parse_date_range_split(
-                        date_from_input, date_to_input
-                    )
-                    print(f"  From (UTC): {date_from_utc}")
-                    print(f"  To   (UTC): {date_to_utc}")
-                except ValueError as e:
-                    print(f"  Error parsing dates: {e}")
-                    print("  Skipping Wix comments.")
-                    has_wix = False
-            else:
-                print("  No end date provided. Skipping Wix comments.")
-                has_wix = False
-        else:
-            print("  No date provided. Skipping Wix comments.")
-            has_wix = False
-    else:
-        if not WIX_IST_TOKEN:
-            print("\nNote: WIX_IST_TOKEN not set in .env - Wix comments will be skipped.")
+    # Step 2: Parse CSV and filter by newsletter title
+    print(f"\nFiltering CSV for: \"{title_query}\"...")
+    matching_rows = parse_guidedtrack_csv(csv_path, title_query)
+    if not matching_rows:
+        print(f"  No rows found matching '{title_query}' in the GuidedTrack CSV.")
+        print(f"  Slug searched: '{_title_to_slug(title_query)}'")
+        cleanup_guidedtrack_csv(csv_path)
+        sys.exit(1)
+    print(f"  Found {len(matching_rows)} matching rows.")
 
-    # Search for the post
-    print(f"\nSearching for: \"{title_query}\"...")
+    # Step 3: Extract ratings and comments from CSV
+    stars = extract_ratings_from_csv(matching_rows)
+    star_comments = extract_comments_from_csv(matching_rows)
+
+    # Step 4: Search Beehiiv for open rate, date, and audience
+    print(f"\nSearching Beehiiv for: \"{title_query}\"...")
     post = find_post_by_title(title_query)
 
     if not post:
-        print("Post not found. Try a different search term.")
+        print("Post not found on Beehiiv. Try a different search term.")
+        cleanup_guidedtrack_csv(csv_path)
         sys.exit(1)
 
-    # Extract data
     title = post.get("subject_line") or post.get("title", "")
     date_str = extract_date(post)
     open_rate = extract_open_rate(post)
-    stars = extract_star_clicks(post)
-
-    # Fetch Wix comments if configured
-    star_comments = {}
-    if has_wix:
-        print("\nFetching Wix form comments...")
-        for star_rating in [5, 4, 3, 2, 1]:
-            form_id = WIX_FORM_IDS[star_rating]
-            try:
-                comments = fetch_wix_comments(form_id, date_from_utc, date_to_utc)
-                star_comments[star_rating] = comments
-                print(f"  {star_rating}*: {len(comments)} comments found")
-            except Exception as e:
-                print(f"  {star_rating}*: Error - {e}")
-                star_comments[star_rating] = []
+    audience = extract_audience(post)
 
     # Show summary
-    print(f"\nFound post:")
-    print(f"  Title:    {title}")
-    print(f"  Author:   {author or '(none)'}")
-    print(f"  Date:     {date_str}")
-    print(f"  Opens %:  {open_rate}")
-    print(f"  5*: {stars[5]}  4*: {stars[4]}  3*: {stars[3]}  2*: {stars[2]}  1*: {stars[1]}")
-
-    if star_comments:
-        total_comments = sum(len(c) for c in star_comments.values())
-        print(f"\n  Wix comments to insert: {total_comments} total")
-        for s in [5, 4, 3, 2, 1]:
-            count = len(star_comments.get(s, []))
-            if count:
-                print(f"    {s}*: {count} comments")
+    print(f"\nSummary:")
+    print(f"  Title:      {title}")
+    print(f"  Author:     {author or '(none)'}")
+    print(f"  Date:       {date_str}")
+    print(f"  Audience:   {audience}")
+    print(f"  Opens %:    {open_rate}")
+    print(f"  Ratings:    5*:{stars[5]}  4*:{stars[4]}  3*:{stars[3]}  2*:{stars[2]}  1*:{stars[1]}")
+    total_comments = sum(len(c) for c in star_comments.values())
+    print(f"  Comments:   {total_comments} total")
+    for s in [5, 4, 3, 2, 1]:
+        count = len(star_comments.get(s, []))
+        if count:
+            print(f"    {s}*: {count} comments")
 
     # Confirm before inserting
     confirm = input("\nInsert this data into Google Sheets? (y/n): ").strip().lower()
     if confirm != "y":
         print("Cancelled.")
+        cleanup_guidedtrack_csv(csv_path)
         sys.exit(0)
 
-    # Insert Beehiiv data into main sheet
-    insert_row_to_sheet(title, author, date_str, open_rate, stars)
+    # Insert data into Google Sheets
+    insert_row_to_sheet(title, author, date_str, audience, open_rate, stars)
 
     # Shared client for subsequent sheet operations
     client = get_sheets_client()
     spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
 
-    # Insert Wix comments into Comments tabs
-    if star_comments:
+    # Insert comments into Comments tabs
+    if any(star_comments.values()):
         print("\nInserting comments into Google Sheets...")
         insert_comments_to_sheets(spreadsheet, title, star_comments)
 
-    # Send report email
+    # Generate and save email report
     if EMAIL_SENDER and EMAIL_APP_PASSWORD and EMAIL_RECIPIENT:
         print("\nPreparing report email...")
         metrics = compute_newsletter_metrics(open_rate, stars)
         means = read_means_from_sheet(spreadsheet.sheet1)
         html = build_report_html(
-            title, author, date_str, metrics, means, star_comments, post_url_input, observations
+            title, author, date_str, audience, metrics, means, star_comments, post_url_input, observations
         )
         try:
             save_report_as_draft(title, html)
@@ -855,6 +798,9 @@ def main():
             print(f"\nWarning: Could not save email draft: {e}")
     else:
         print("\nNote: Email not configured. Set EMAIL_SENDER, EMAIL_APP_PASSWORD, EMAIL_RECIPIENT in .env")
+
+    # Cleanup: delete the downloaded CSV
+    cleanup_guidedtrack_csv(csv_path)
 
     print("\nDone!")
 

@@ -12,9 +12,11 @@ Every week a newsletter goes out to thousands of readers. And every week the sam
 
 This project automates the answer.
 
-It starts when the operator opens a terminal and types the newsletter title. The script `beehiiv_to_sheets.py` goes to work. First, it hits the **Beehiiv API** and pulls the numbers: open rate and how many people clicked each star rating. Then it reaches the **Wix API** and collects the **comments** readers left on the feedback forms.
+It starts when the operator opens a terminal and types the newsletter title. The script `beehiiv_to_sheets.py` goes to work. First, it downloads the ratings and feedback data from **GuidedTrack** — a survey platform where readers rate each newsletter on a five-point scale (Excellent, Good, Okay, Subpar, Bad) and optionally leave written feedback. The script filters the data for the requested newsletter, counts the votes for each rating level, and collects the comments.
 
-With everything in hand, it connects to **Google Sheets**, inserts a new row with the metrics, writes the formulas automatically, and distributes comments across the star-rating tabs. It then builds a **formatted HTML email** comparing the results against the historical average and saves it as a **draft in Gmail**, ready for review and sending.
+Next, it hits the **Beehiiv API** to pull the open rate, publish date, and audience information.
+
+With everything in hand, it connects to **Google Sheets**, inserts a new row with the metrics, writes the formulas automatically, and distributes comments across the star-rating tabs. It then builds a **formatted HTML email** comparing the results against the historical average and saves it as a **draft in Gmail**, ready for review and sending. Finally, it deletes the downloaded CSV to keep the project clean.
 
 On the other side there's the **dashboard**. Built with Streamlit and Plotly, it reads the same spreadsheet, cleans the data, and displays five interactive charts — open rate, average rating, positive ratings, negative ratings, and total ratings — each with an average line for comparison. Date and author filters let you explore the full history.
 
@@ -22,11 +24,22 @@ What used to be manual copy-and-paste is now **a single terminal command** that 
 
 ---
 
+## Data sources
+
+| Data | Source |
+|------|--------|
+| Open rate, publish date, audience | Beehiiv API |
+| Star ratings (Excellent→5★, Good→4★, Okay→3★, Subpar→2★, Bad→1★) | GuidedTrack CSV |
+| Reader feedback/comments | GuidedTrack CSV |
+| Storage & dashboard data | Google Sheets |
+
+---
+
 ## Project structure
 
 ```
 dashboard-newsletter/
-├── beehiiv_to_sheets.py    # Data pipeline (Beehiiv + Wix → Sheets + Email)
+├── beehiiv_to_sheets.py    # Data pipeline (Beehiiv + GuidedTrack → Sheets + Email)
 ├── app.py                  # Visual dashboard (Streamlit + Plotly)
 ├── data_loader.py          # Reads and cleans data from the spreadsheet
 ├── main.py                 # Quick test / debug script
@@ -90,9 +103,10 @@ BEEHIIV_PUBLICATION_ID=your_publication_id_here
 GOOGLE_CREDENTIALS_PATH=credentials.json
 GOOGLE_SHEET_ID=your_google_sheet_id_here
 
-# Wix Forms (for collecting star-rating comments)
-WIX_IST_TOKEN=your_wix_token_here
-WIX_SITE_ID=your_wix_site_id_here
+# GuidedTrack (for ratings & feedback)
+GT_EMAIL=your_guidedtrack_email
+GT_PASSWORD=your_guidedtrack_password
+GT_PROGRAM_ID=38551
 
 # Email (for the automated report)
 EMAIL_SENDER=your_email@gmail.com
@@ -122,10 +136,9 @@ Opens in your browser at `http://localhost:8501`. No extra configuration needed 
 
 #### Before running, gather this information:
 
-1. **Newsletter title** — Go to [app.beehiiv.com](https://app.beehiiv.com/), navigate to Posts, and copy the title (or part of it)
-2. **Author(s)** — the name(s) listed as author on Beehiiv
-3. **Post link** — the blog post URL on [clearerthinking.org](https://www.clearerthinking.org/) that corresponds to the newsletter
-4. **Wix comments date range** — On [wix.com](https://www.wix.com/), go to Forms & Submissions and note the time window when comments were submitted (e.g. `Jun 25th, 2026 8:00 PM` to `Jul 2nd, 2026 8:00 PM`)
+1. **Newsletter title** — the exact title of the newsletter (e.g. "What stands between you and reality?"). This is used to match entries in the GuidedTrack survey data and to find the post on Beehiiv.
+2. **Author(s)** — the name(s) listed as author
+3. **Post link** — the blog post URL on [clearerthinking.org](https://www.clearerthinking.org/)
 
 #### Run the script:
 
@@ -136,20 +149,27 @@ poetry run python beehiiv_to_sheets.py
 The script will prompt you for each piece of information:
 
 ```
-Enter the newsletter title (or part of it): AI and Decision Making
+Newsletter title: What stands between you and reality?
 Author(s): Spencer Greenberg
-Post link: https://www.clearerthinking.org/post/ai-and-decision-making
+Post link: https://www.clearerthinking.org/post/what-stands-between-you-and-reality
 Observations (press Enter to skip):
 
-Wix comments date range (Brasilia time).
-From: Jun 25th, 2026 8:00 PM
-To: Jul 2nd, 2026 8:00 PM
+Downloading GuidedTrack data (program 38551)...
+  CSV downloaded.
 
-Found post:
-  Title:    AI and Decision Making
-  Author:   Spencer Greenberg
-  Opens %:  0.452
-  5*: 120  4*: 85  3*: 30  2*: 10  1*: 5
+Filtering CSV for: "What stands between you and reality?"...
+  Found 51 matching rows.
+
+Searching Beehiiv for: "What stands between you and reality?"...
+
+Summary:
+  Title:      What stands between you and reality?
+  Author:     Spencer Greenberg
+  Date:       Aug 27, 2026
+  Audience:   All Subscribers
+  Opens %:    29.14
+  Ratings:    5*:22  4*:11  3*:2  2*:6  1*:10
+  Comments:   10 total
 
 Insert this data into Google Sheets? (y/n): y
 ```
@@ -157,13 +177,30 @@ Insert this data into Google Sheets? (y/n): y
 You can also pass the title directly from the command line:
 
 ```bash
-poetry run python beehiiv_to_sheets.py "AI and Decision Making"
+poetry run python beehiiv_to_sheets.py "What stands between you and reality?"
 ```
 
 After confirming, the script will:
-- Insert the data into Google Sheets
-- Insert Wix comments into the star-rating tabs
+- Insert the data into Google Sheets (row + formulas)
+- Insert reader feedback into the star-rating comment tabs
 - Save a formatted report email as a draft in Gmail
+- Delete the downloaded GuidedTrack CSV
+
+---
+
+## How it works (step by step)
+
+1. **Downloads** the latest survey data CSV from GuidedTrack (program "CT Newsletter Ratings & Feedback")
+2. **Filters** the CSV rows by matching the newsletter title against the article URL slug
+3. **Counts** the `final_rating` values: Excellent→5★, Good→4★, Okay→3★, Subpar→2★, Bad→1★
+4. **Collects** non-empty `feedback` entries grouped by rating level
+5. **Fetches** the open rate, publish date, and audience from the Beehiiv API
+6. **Inserts** a new row at position 3 in Google Sheets with all metrics and formulas
+7. **Updates** the Means row (row 1) so averages include the new data
+8. **Inserts** comments into the corresponding star-rating tabs (5★ through 1★ Comments)
+9. **Generates** an HTML email report comparing results to historical averages
+10. **Saves** the email as a draft in Gmail
+11. **Deletes** the downloaded CSV file
 
 ---
 
@@ -180,16 +217,6 @@ To receive reports at your own email:
    - Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
    - Create a new app password and paste it into your `.env`
 
-### Timezone
-
-The script uses Brazil time (`America/Sao_Paulo`) for Wix comment dates. If you need to change it, edit this line in `beehiiv_to_sheets.py`:
-
-```python
-INPUT_TZ = ZoneInfo("America/Sao_Paulo")
-```
-
-Examples: `America/New_York`, `America/Los_Angeles`, `Europe/London`, `Europe/Berlin`.
-
 ---
 
 ## Common issues
@@ -197,8 +224,9 @@ Examples: `America/New_York`, `America/Los_Angeles`, `Europe/London`, `Europe/Be
 - **`ModuleNotFoundError`** — Run `poetry install` to install dependencies
 - **`FileNotFoundError: credentials.json`** — Make sure `credentials.json` is inside `dashboard-newsletter/`
 - **Email draft not saving** — Check that `EMAIL_APP_PASSWORD` is correct and 2-Step Verification is enabled
-- **Wrong dates for comments** — Confirm the timezone in `INPUT_TZ` matches your region
-- **`UnicodeEncodeError` on Windows** — Set the environment variable `PYTHONIOENCODING=utf-8` before running
+- **No matching rows in CSV** — Make sure the newsletter title matches the article URL slug on clearerthinking.org
+- **GuidedTrack returns HTML instead of CSV** — Check `GT_EMAIL` and `GT_PASSWORD` in `.env`
+- **`UnicodeEncodeError` on Windows** — Run with `python -X utf8` or set `PYTHONIOENCODING=utf-8`
 
 ---
 
